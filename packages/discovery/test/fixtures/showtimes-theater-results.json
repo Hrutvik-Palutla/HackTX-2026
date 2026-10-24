@@ -1,0 +1,19 @@
+{
+  "search_metadata": { "id": "fixture-theater-search" },
+  "showtimes": [
+    {
+      "day": "Sunday",
+      "date": "Nov 8",
+      "movies": [
+        {
+          "name": "Dune",
+          "showing": [{ "time": ["6:00pm"], "type": "Standard" }]
+        },
+        {
+          "name": "Other Movie",
+          "showing": [{ "time": ["7:00pm"], "type": "Standard" }]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "search_metadata": { "id": "fixture-maps-search" },
+  "local_results": [
+    {
+      "title": "Example Music Hall",
+      "address": "200 Test Ave, Austin, TX",
+      "website": "https://venue.example.test"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@hacktx/integrations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./serpapi": "./serpapi.ts",
+    "./link-wallet": "./link-wallet.ts",
+    "./reimbursements": "./reimbursements.ts"
+  }
+}

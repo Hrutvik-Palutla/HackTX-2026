@@ -1,0 +1,9 @@
+{
+  "name": "@hacktx/discovery",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "smoke": "node --experimental-strip-types src/smoke.ts"
+  }
+}
