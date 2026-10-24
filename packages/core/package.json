@@ -1,0 +1,13 @@
+{
+  "name": "@hacktx/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@hacktx/contracts": "workspace:*",
+    "@hacktx/db": "workspace:*",
+    "drizzle-orm": "0.45.4"
+  },
+  "devDependencies": { "@electric-sql/pglite": "0.5.11" }
+}

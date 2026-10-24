@@ -1,0 +1,13 @@
+{
+  "name": "@hacktx/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "tsx --env-file-if-exists=../../.env src/index.ts" },
+  "dependencies": {
+    "@hacktx/agent": "workspace:*",
+    "@hacktx/contracts": "workspace:*",
+    "@hacktx/core": "workspace:*",
+    "@hacktx/db": "workspace:*"
+  }
+}

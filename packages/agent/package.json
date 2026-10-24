@@ -1,0 +1,17 @@
+{
+  "name": "@hacktx/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "smoke": "tsx --env-file-if-exists=../../.env src/smoke.ts" },
+  "dependencies": {
+    "@hacktx/contracts": "workspace:*",
+    "@hacktx/core": "workspace:*",
+    "@hacktx/db": "workspace:*",
+    "@hacktx/templates": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "openai": "7.43.0",
+    "zod": "4.6.7"
+  }
+}

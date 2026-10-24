@@ -1,0 +1,463 @@
+// Single shared schema (Part 2 owns migrations). Other parts request columns; they don't fork tables.
+// Encrypted columns (`*_enc`) hold AES-256-GCM envelopes from @hacktx/core/crypto, never plaintext.
+import { sql } from 'drizzle-orm';
+import {
+  pgTable, text, uuid, timestamp, boolean, integer, jsonb, numeric,
+  primaryKey, uniqueIndex, index, check, type AnyPgColumn,
+} from 'drizzle-orm/pg-core';
+
+const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
+const created = () => ts('created_at').notNull().defaultNow();
+const updated = () => ts('updated_at').notNull().defaultNow();
+const pk = () => uuid('id').primaryKey().defaultRandom();
+
+// ---------- Better Auth (core + phone-number plugin) ----------
+// Part 1: verify against `npx @better-auth/cli generate` for the pinned config; JS keys are what the adapter maps.
+export const user = pgTable('user', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  email: text('email').notNull().unique(), // synthetic `.invalid` address; never a contact
+  emailVerified: boolean('email_verified').notNull().default(false),
+  image: text('image'),
+  phoneNumber: text('phone_number').unique(), // E.164
+  phoneNumberVerified: boolean('phone_number_verified').notNull().default(false),
+  city: jsonb('city'), // contracts City
+  interests: jsonb('interests').$type<string[]>().notNull().default([]),
+  onboardingCompleted: boolean('onboarding_completed').notNull().default(false),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const session = pgTable('session', {
+  id: text('id').primaryKey(),
+  expiresAt: ts('expires_at').notNull(),
+  token: text('token').notNull().unique(),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const account = pgTable('account', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  providerId: text('provider_id').notNull(),
+  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  accessToken: text('access_token'),
+  refreshToken: text('refresh_token'),
+  idToken: text('id_token'),
+  accessTokenExpiresAt: ts('access_token_expires_at'),
+  refreshTokenExpiresAt: ts('refresh_token_expires_at'),
+  scope: text('scope'),
+  password: text('password'),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const verification = pgTable('verification', {
+  id: text('id').primaryKey(),
+  identifier: text('identifier').notNull(),
+  value: text('value').notNull(),
+  expiresAt: ts('expires_at').notNull(),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+const userRef = (name: string) => text(name).references(() => user.id, { onDelete: 'cascade' });
+
+// ---------- identity / friends ----------
+export const messagingIdentities = pgTable('messaging_identities', {
+  id: pk(),
+  userId: userRef('user_id').notNull(),
+  provider: text('provider').notNull(),
+  handle: text('handle').notNull(),
+  kind: text('kind').notNull(), // phone | email | telegram_id
+  verifiedAt: ts('verified_at'),
+  createdAt: created(),
+}, (t) => [uniqueIndex().on(t.provider, t.handle)]);
+
+export const friendships = pgTable('friendships', {
+  userLow: userRef('user_low').notNull(),
+  userHigh: userRef('user_high').notNull(),
+  requestedBy: userRef('requested_by').notNull(),
+  status: text('status').notNull(), // pending | accepted | declined
+  acceptedAt: ts('accepted_at'),
+  createdAt: created(),
+}, (t) => [primaryKey({ columns: [t.userLow, t.userHigh] }), check('friendship_order', sql`${t.userLow} < ${t.userHigh}`)]);
+
+export const friendInvites = pgTable('friend_invites', {
+  id: pk(),
+  inviterUserId: userRef('inviter_user_id').notNull(),
+  recipientPhoneEnc: text('recipient_phone_enc').notNull(),
+  recipientPhoneDigest: text('recipient_phone_digest').notNull(), // HMAC(PHONE_LOOKUP_HMAC_KEY, e164)
+  tokenHash: text('token_hash').notNull().unique(),
+  state: text('state').notNull(), // pending | accepted | declined | expired
+  acceptedByUserId: userRef('accepted_by_user_id'),
+  expiresAt: ts('expires_at').notNull(),
+  createdAt: created(),
+}, (t) => [index().on(t.recipientPhoneDigest)]);
+
+// ---------- conversations ----------
+export const conversations = pgTable('conversations', {
+  id: pk(),
+  provider: text('provider').notNull(),
+  sendingLine: text('sending_line').notNull(),
+  externalChatId: text('external_chat_id').notNull(),
+  kind: text('kind').notNull(), // group | private
+  activePlanId: uuid('active_plan_id').references((): AnyPgColumn => plans.id, { onDelete: 'set null' }),
+  createdAt: created(),
+}, (t) => [uniqueIndex().on(t.provider, t.sendingLine, t.externalChatId)]);
+
+export const conversationMembers = pgTable('conversation_members', {
+  id: pk(),
+  conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  messagingIdentityId: uuid('messaging_identity_id').references(() => messagingIdentities.id),
+  unresolvedHandle: text('unresolved_handle'),
+  isCurrent: boolean('is_current').notNull().default(true),
+});
+
+// ---------- plans ----------
+export const plans = pgTable('plans', {
+  id: pk(),
+  organizerUserId: userRef('organizer_user_id').notNull(),
+  request: text('request').notNull(),
+  templateId: text('template_id').notNull(), // movie-night | local-outing
+  city: jsonb('city').notNull(),
+  timeZone: text('time_zone').notNull(),
+  windowStart: ts('window_start'),
+  windowEnd: ts('window_end'),
+  status: text('status').notNull(),
+  inputRevision: integer('input_revision').notNull().default(0),
+  activeVersionId: uuid('active_version_id').references((): AnyPgColumn => planVersions.id),
+  selectedOptionId: uuid('selected_option_id').references((): AnyPgColumn => planOptions.id),
+  mode: text('mode').notNull().default('test'),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const planParticipants = pgTable('plan_participants', {
+  id: pk(),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  userId: userRef('user_id'), // null while invited
+  inviteId: uuid('invite_id').references(() => friendInvites.id),
+  requestedName: text('requested_name'),
+  attendance: text('attendance').notNull().default('unknown'), // unknown | attending | declined | left
+  createdAt: created(),
+}, (t) => [uniqueIndex().on(t.planId, t.userId)]);
+
+export const planConversations = pgTable('plan_conversations', {
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  audience: text('audience').notNull(), // group | private
+  ownerUserId: userRef('owner_user_id'),
+}, (t) => [primaryKey({ columns: [t.planId, t.conversationId] })]);
+
+export const messages = pgTable('messages', {
+  id: pk(),
+  conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  providerMessageId: text('provider_message_id').notNull(),
+  senderUserId: userRef('sender_user_id'),
+  senderHandle: text('sender_handle').notNull(),
+  isPrivate: boolean('is_private').notNull(),
+  body: text('body'), // public conversations only
+  bodyEnc: text('body_enc'), // private conversations only
+  replyToProviderMessageId: text('reply_to_provider_message_id'),
+  occurredAt: ts('occurred_at').notNull(),
+}, (t) => [
+  uniqueIndex().on(t.conversationId, t.providerMessageId),
+  check('message_body_privacy', sql`(${t.isPrivate} and ${t.body} is null) or (not ${t.isPrivate} and ${t.bodyEnc} is null)`),
+]);
+
+export const privateFacts = pgTable('private_facts', {
+  id: pk(),
+  ownerUserId: userRef('owner_user_id').notNull(),
+  planId: uuid('plan_id').references(() => plans.id, { onDelete: 'cascade' }),
+  kind: text('kind').notNull(),
+  valueEnc: text('value_enc').notNull(),
+  sourceMessageId: uuid('source_message_id').references(() => messages.id),
+  supersededBy: uuid('superseded_by').references((): AnyPgColumn => privateFacts.id),
+  updatedAt: updated(),
+}, (t) => [index().on(t.ownerUserId, t.planId)]);
+
+// ---------- calendar (Part 3 implements) ----------
+export const calendarConnections = pgTable('calendar_connections', {
+  userId: userRef('user_id').primaryKey(),
+  refreshTokenEnc: text('refresh_token_enc').notNull(),
+  scopes: jsonb('scopes').$type<string[]>().notNull(),
+  primaryOnly: boolean('primary_only').notNull().default(true),
+  status: text('status').notNull(), // connected | revoked | error
+  updatedAt: updated(),
+});
+
+export const availabilitySnapshots = pgTable('availability_snapshots', {
+  id: pk(),
+  userId: userRef('user_id').notNull(),
+  planId: uuid('plan_id').references(() => plans.id, { onDelete: 'cascade' }),
+  busy: jsonb('busy').$type<{ startAt: string; endAt: string }[]>().notNull(), // intervals only, never titles
+  windowStart: ts('window_start').notNull(),
+  windowEnd: ts('window_end').notNull(),
+  source: text('source').notNull(), // calendar | manual | demo
+  status: text('status').notNull(), // ok | disconnected | error
+  fetchedAt: ts('fetched_at').notNull(),
+  validUntil: ts('valid_until'),
+}, (t) => [index().on(t.userId, t.planId)]);
+
+export const calendarEvents = pgTable('calendar_events', {
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  userId: userRef('user_id').notNull(),
+  versionId: uuid('version_id').notNull().references(() => planVersions.id),
+  providerEventId: text('provider_event_id'),
+  icsUid: text('ics_uid').notNull(),
+  syncStatus: text('sync_status').notNull(),
+  updatedAt: updated(),
+}, (t) => [primaryKey({ columns: [t.planId, t.userId] })]);
+
+// ---------- discovery (Part 4 writes) ----------
+export const sources = pgTable('sources', {
+  id: pk(),
+  url: text('url').notNull(),
+  title: text('title').notNull(),
+  provider: text('provider').notNull(),
+  providerSearchId: text('provider_search_id'),
+  fetchedAt: ts('fetched_at').notNull(),
+});
+
+export const candidates = pgTable('candidates', {
+  id: pk(),
+  kind: text('kind').notNull(),
+  payload: jsonb('payload').notNull(), // contracts Candidate (id mirrors this row)
+  cacheKey: text('cache_key').notNull(),
+  fetchedAt: ts('fetched_at').notNull(),
+  expiresAt: ts('expires_at').notNull(),
+}, (t) => [index().on(t.cacheKey)]);
+
+// ---------- versions / options / votes ----------
+export const planVersions = pgTable('plan_versions', {
+  id: pk(),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  versionNumber: integer('version_number').notNull(),
+  inputRevision: integer('input_revision').notNull(),
+  runId: uuid('run_id').references((): AnyPgColumn => agentRuns.id),
+  supersededAt: ts('superseded_at'),
+  createdAt: created(),
+}, (t) => [uniqueIndex().on(t.planId, t.versionNumber)]);
+
+export const planOptions = pgTable('plan_options', {
+  id: pk(),
+  versionId: uuid('version_id').notNull().references(() => planVersions.id, { onDelete: 'cascade' }),
+  label: text('label').notNull(),
+  payload: jsonb('payload').notNull(), // contracts PlanOption
+}, (t) => [uniqueIndex().on(t.versionId, t.label)]);
+
+export const polls = pgTable('polls', {
+  id: pk(),
+  versionId: uuid('version_id').notNull().references(() => planVersions.id, { onDelete: 'cascade' }),
+  conversationId: uuid('conversation_id').notNull().references(() => conversations.id),
+  providerMessageId: text('provider_message_id').notNull(),
+  superseded: boolean('superseded').notNull().default(false),
+  createdAt: created(),
+}, (t) => [uniqueIndex().on(t.conversationId, t.providerMessageId)]);
+
+// One row per acceptable option; favorite/none live in vote_states.
+export const votes = pgTable('votes', {
+  versionId: uuid('version_id').notNull().references(() => planVersions.id, { onDelete: 'cascade' }),
+  userId: userRef('user_id').notNull(),
+  optionId: uuid('option_id').notNull().references(() => planOptions.id, { onDelete: 'cascade' }),
+  source: text('source').notNull(),
+  sourceEventId: text('source_event_id').notNull(),
+  updatedAt: updated(),
+}, (t) => [primaryKey({ columns: [t.versionId, t.userId, t.optionId] })]);
+
+export const voteStates = pgTable('vote_states', {
+  versionId: uuid('version_id').notNull().references(() => planVersions.id, { onDelete: 'cascade' }),
+  userId: userRef('user_id').notNull(),
+  favoriteOptionId: uuid('favorite_option_id').references(() => planOptions.id),
+  noneAcceptable: boolean('none_acceptable').notNull().default(false),
+  objection: text('objection'),
+  sourceEventId: text('source_event_id').notNull(),
+  updatedAt: updated(),
+}, (t) => [primaryKey({ columns: [t.versionId, t.userId] })]);
+
+export const planDecisions = pgTable('plan_decisions', {
+  id: pk(),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  versionId: uuid('version_id').notNull().references(() => planVersions.id),
+  optionId: uuid('option_id').notNull().references(() => planOptions.id),
+  attendeeUserIds: jsonb('attendee_user_ids').$type<string[]>().notNull(),
+  evidenceMessageIds: jsonb('evidence_message_ids').$type<string[]>().notNull(),
+  buyerUserId: userRef('buyer_user_id'),
+  recordedBy: userRef('recorded_by').notNull(),
+  recordedAt: created(),
+});
+
+// ---------- fulfillment (Part 4 implements) ----------
+export const bookingQuotes = pgTable('booking_quotes', {
+  id: pk(),
+  planId: uuid('plan_id').notNull().references(() => plans.id),
+  versionId: uuid('version_id').notNull().references(() => planVersions.id),
+  optionId: uuid('option_id').notNull().references(() => planOptions.id),
+  buyerUserId: userRef('buyer_user_id').notNull(),
+  bindingHash: text('binding_hash').notNull(),
+  expiresAt: ts('expires_at').notNull(),
+  mode: text('mode').notNull(),
+  payload: jsonb('payload').notNull(), // contracts BookingQuote
+  createdAt: created(),
+});
+
+export const buyerAuthorizations = pgTable('buyer_authorizations', {
+  id: pk(),
+  quoteId: uuid('quote_id').notNull().references(() => bookingQuotes.id),
+  buyerUserId: userRef('buyer_user_id').notNull(),
+  walletRequestId: text('wallet_request_id').notNull().unique(),
+  status: text('status').notNull(),
+  approvedBindingHash: text('approved_binding_hash'),
+  mode: text('mode').notNull(),
+  checkedAt: ts('checked_at').notNull(),
+});
+
+export const bookings = pgTable('bookings', {
+  id: pk(),
+  planId: uuid('plan_id').notNull().references(() => plans.id),
+  versionId: uuid('version_id').notNull().references(() => planVersions.id),
+  quoteId: uuid('quote_id').references(() => bookingQuotes.id),
+  authorizationId: uuid('authorization_id').unique().references(() => buyerAuthorizations.id), // one submission per approval
+  status: text('status').notNull(),
+  merchantOrderRef: text('merchant_order_ref'),
+  confirmationUrl: text('confirmation_url'),
+  actualTotal: jsonb('actual_total'),
+  mode: text('mode').notNull(),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const walletConnections = pgTable('wallet_connections', {
+  userId: userRef('user_id').notNull(),
+  provider: text('provider').notNull(),
+  authEnc: text('auth_enc').notNull(),
+  status: text('status').notNull(),
+  updatedAt: updated(),
+}, (t) => [primaryKey({ columns: [t.userId, t.provider] })]);
+
+export const reimbursements = pgTable('reimbursements', {
+  id: pk(),
+  bookingId: uuid('booking_id').notNull().references(() => bookings.id),
+  payerUserId: userRef('payer_user_id').notNull(),
+  recipientUserId: userRef('recipient_user_id').notNull(),
+  amountMinor: integer('amount_minor').notNull(),
+  currency: text('currency').notNull().default('USD'),
+  paymentUrl: text('payment_url'),
+  status: text('status').notNull(),
+  confirmationSource: text('confirmation_source').notNull().default('none'),
+  mode: text('mode').notNull(),
+  updatedAt: updated(),
+}, (t) => [uniqueIndex().on(t.bookingId, t.payerUserId)]);
+
+// ---------- durable work ----------
+export const inboundEvents = pgTable('inbound_events', {
+  id: pk(),
+  provider: text('provider').notNull(),
+  eventId: text('event_id').notNull(),
+  envelopeHash: text('envelope_hash').notNull(),
+  payload: jsonb('payload').notNull(),
+  state: text('state').notNull().default('received'),
+  receivedAt: created(),
+}, (t) => [uniqueIndex().on(t.provider, t.eventId)]);
+
+export const jobs = pgTable('jobs', {
+  id: pk(),
+  kind: text('kind').notNull(),
+  planId: uuid('plan_id').references(() => plans.id, { onDelete: 'cascade' }),
+  dedupeKey: text('dedupe_key').notNull().unique(),
+  payload: jsonb('payload').notNull().default({}),
+  state: text('state').notNull().default('queued'), // queued | running | done | failed
+  runAfter: ts('run_after').notNull().defaultNow(),
+  leaseUntil: ts('lease_until'),
+  leasedBy: text('leased_by'),
+  attempts: integer('attempts').notNull().default(0),
+  maxAttempts: integer('max_attempts').notNull().default(5),
+  lastError: text('last_error'),
+  createdAt: created(),
+  updatedAt: updated(),
+}, (t) => [index().on(t.state, t.runAfter)]);
+
+export const outbox = pgTable('outbox', {
+  id: pk(),
+  recipient: jsonb('recipient').notNull(), // contracts OutboundRecipient
+  planId: uuid('plan_id').references(() => plans.id, { onDelete: 'cascade' }),
+  versionId: uuid('version_id').references(() => planVersions.id),
+  effectKey: text('effect_key').notNull().unique(),
+  body: text('body'), // group messages
+  bodyEnc: text('body_enc'), // private / invite / OTP messages
+  providerMessageId: text('provider_message_id'),
+  status: text('status').notNull().default('pending'), // pending | sent | failed | unknown
+  expiresAt: ts('expires_at'),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const externalEffects = pgTable('external_effects', {
+  id: pk(),
+  operationKey: text('operation_key').notNull().unique(),
+  kind: text('kind').notNull(),
+  planId: uuid('plan_id').references(() => plans.id),
+  quoteId: uuid('quote_id').references(() => bookingQuotes.id),
+  state: text('state').notNull().default('reserved'), // reserved | inflight | confirmed | unknown | failed
+  providerRequestId: text('provider_request_id'),
+  data: jsonb('data'),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+// ---------- agent platform (Northmark) ----------
+export const agentTemplates = pgTable('agent_templates', {
+  id: text('id').notNull(),
+  version: integer('version').notNull(),
+  config: jsonb('config').notNull(), // contracts AgentTemplate
+  createdAt: created(),
+}, (t) => [primaryKey({ columns: [t.id, t.version] })]);
+
+export const agentRuns = pgTable('agent_runs', {
+  id: pk(),
+  planId: uuid('plan_id').references(() => plans.id, { onDelete: 'cascade' }),
+  task: text('task').notNull(), // route | plan | repair | discuss
+  templateId: text('template_id').notNull(),
+  templateVersion: integer('template_version').notNull(),
+  model: text('model').notNull(),
+  inputRevision: integer('input_revision').notNull(),
+  status: text('status').notNull(), // running | ok | error | stale | waiting | limit
+  error: text('error'),
+  inputTokens: integer('input_tokens').notNull().default(0),
+  outputTokens: integer('output_tokens').notNull().default(0),
+  toolCalls: integer('tool_calls').notNull().default(0),
+  searches: integer('searches').notNull().default(0),
+  estimatedCostUsd: numeric('estimated_cost_usd', { precision: 10, scale: 6 }).notNull().default('0'),
+  startedAt: created(),
+  finishedAt: ts('finished_at'),
+});
+
+export const runSteps = pgTable('run_steps', {
+  runId: uuid('run_id').notNull().references(() => agentRuns.id, { onDelete: 'cascade' }),
+  index: integer('index').notNull(),
+  kind: text('kind').notNull(),
+  name: text('name').notNull(),
+  durationMs: integer('duration_ms').notNull(),
+  inputRevision: integer('input_revision').notNull(),
+  outcome: text('outcome').notNull(),
+  sourceIds: jsonb('source_ids').$type<string[]>().notNull().default([]),
+  redactedSummary: text('redacted_summary').notNull(),
+  inputTokens: integer('input_tokens').notNull().default(0),
+  outputTokens: integer('output_tokens').notNull().default(0),
+  estimatedCostUsd: numeric('estimated_cost_usd', { precision: 10, scale: 6 }).notNull().default('0'),
+}, (t) => [primaryKey({ columns: [t.runId, t.index] })]);
+
+export const usageReservations = pgTable('usage_reservations', {
+  id: pk(),
+  provider: text('provider').notNull(), // muse | serpapi | ...
+  runId: uuid('run_id').references(() => agentRuns.id),
+  reservedUnits: integer('reserved_units').notNull(),
+  actualUnits: integer('actual_units'),
+  reservedCostUsd: numeric('reserved_cost_usd', { precision: 10, scale: 6 }).notNull().default('0'),
+  actualCostUsd: numeric('actual_cost_usd', { precision: 10, scale: 6 }),
+  createdAt: created(),
+});
