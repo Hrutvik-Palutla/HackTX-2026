@@ -7,13 +7,14 @@
     "node": ">=24"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p apps/worker/tsconfig.json",
     "test": "vitest run",
     "db:generate": "pnpm --filter @hacktx/db generate",
     "db:migrate": "pnpm --filter @hacktx/db migrate",
     "worker": "pnpm --filter @hacktx/worker start",
     "muse:smoke": "pnpm --filter @hacktx/agent smoke",
-    "agent:demo": "pnpm --filter @hacktx/agent demo"
+    "agent:demo": "pnpm --filter @hacktx/agent demo",
+    "test:part4": "cd packages/fulfillment && node --test test/*.test.ts ../discovery/test/*.test.ts ../integrations/link-wallet.test.ts ../../apps/booking-worker/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

@@ -102,9 +102,13 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
     }, (r) => ({ summary: `${r.list.length}/${found.length} feasible` }));
 
     if (!feasible.list.length) {
+      // Say which problem it is: no listings at all (e.g. Google returned no structured showtimes) vs. nothing fits.
+      const what = intent.kind === 'movie' && intent.movieTitle ? `listed showtimes for ${intent.movieTitle}` : 'listed options';
+      const text = found.length
+        ? "I couldn't find an option that fits everyone's known schedule and limits in that window. Want to try a different day or time range, or a different kind of activity?"
+        : `I couldn't find ${what} near ${city.label} in that window from my sources, and I won't guess times or prices. Want to try different days, a different activity, or tell me a specific showing you've seen?`;
       await setStatus(db, plan.id, plan.inputRevision, 'clarifying');
-      await notifyPlan(db, plan.id, `rev${plan.inputRevision}:none`,
-        "I couldn't find an option that fits everyone's known schedule and limits in that window. Want to try a different day or time range, or a different kind of activity?");
+      await notifyPlan(db, plan.id, `rev${plan.inputRevision}:none`, text);
       await rec.finish('waiting');
       return { status: 'no_options' as const };
     }

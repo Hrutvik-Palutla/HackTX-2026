@@ -3,6 +3,7 @@ import { createDb } from '@hacktx/db';
 import { claim, complete, fail, heartbeat, AppError } from '@hacktx/core';
 import { createMuse, fixtureDiscovery, handleInbound, runPlanJob, runPollReminder, type InboundJob } from '@hacktx/agent';
 import type { DiscoveryPort, JobKind } from '@hacktx/contracts';
+import { createSerpApiDiscovery } from '../../../packages/discovery/src/index.ts';
 import { handlers, register, type JobHandler } from './registry';
 
 const { db, pool } = createDb();
@@ -11,15 +12,19 @@ let museClient: ReturnType<typeof createMuse> | null = null;
 const muse = () => (museClient ??= createMuse());
 const workerId = `worker-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 
-// Part 4 replaces this with the SerpApi DiscoveryPort. Fixtures are opt-in and labeled FIXTURE everywhere.
+// Real discovery = Part 4's SerpApi adapter (bounded requests, cache, honest unknowns, source metadata).
+// DISCOVERY=fixture is an explicit, FIXTURE-labeled local fallback only.
 let discovery: DiscoveryPort | null = null;
 if (process.env.DISCOVERY === 'fixture') {
   console.warn('[worker] DISCOVERY=fixture: options will be labeled FIXTURE data, not real venues');
   discovery = fixtureDiscovery;
+} else if (process.env.SERPAPI_API_KEY) {
+  const max = Number(process.env.MAX_SERPAPI_REQUESTS); // unset -> adapter default cap
+  discovery = createSerpApiDiscovery({ apiKey: process.env.SERPAPI_API_KEY, ...(max > 0 ? { maxRequests: max } : {}) });
 }
 
 const planHandler: JobHandler = async ({ job }) => {
-  if (!discovery) throw new AppError('UNRESOLVED', 'No DiscoveryPort configured (DISCOVERY=fixture or Part 4 adapter)', true);
+  if (!discovery) throw new AppError('UNRESOLVED', 'No discovery configured: set SERPAPI_API_KEY (or DISCOVERY=fixture for labeled local data)', true);
   await runPlanJob({ db, muse: muse(), discovery }, job.payload as { planId: string; inputRevision: number; reason?: string });
 };
 register('plan', planHandler);

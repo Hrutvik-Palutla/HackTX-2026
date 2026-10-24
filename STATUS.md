@@ -46,6 +46,17 @@ Each run cost about $0.013–0.016 (estimated). Discovery is still the labeled F
   Poll events go to `applyPollVote` with the voter's current full selection. Calendar busy intervals go in `availability_snapshots`, with no event titles.
 - **Part 4:** implement `DiscoveryPort` and pass it to `runPlanJob`; the worker currently accepts only the labeled `DISCOVERY=fixture`. Candidate `id`s must be stable within a run. Fulfillment tables exist; ask Part 2 for column changes.
 
+**Part 2 + Part 4 integration (branch `integration/part2-part4`; merges both, no changes to Part 4's files except a `.gitignore` union):**
+- The worker uses Part 4's `SerpApiDiscovery` when `SERPAPI_API_KEY` is set. It loads `.env` and `.env.local`. `DISCOVERY=fixture` remains an explicit, labeled fallback.
+- `apps/worker/test/part4-discovery.test.ts` feeds Part 4's recorded SerpApi fixture through their adapter into Part 2's planner: options are published, the source link is persisted and returned, and price/runtime stay unknown.
+- Schema: Part 2's unused fulfillment tables were dropped. Part 4's `fulfillment_*` tables are now in the Drizzle schema, identical to `packages/fulfillment/sql/001_part4.sql` (`IF NOT EXISTS`). **Tiger needs migrations `0001` and `0002` applied** (web SQL editor, or `pnpm db:migrate` from a network that allows the Tiger port).
+- Toolchains coexist:
+  - Root `pnpm typecheck` checks Part 2 strictly; the worker config also checks the Part 4 code it imports.
+  - `pnpm test` is vitest for Part 2 + cross-part tests; `pnpm test:part4` is Part 4's `node --test` suite.
+- On Windows, 9 of Part 4's 75 tests fail only on the POSIX `0700` auth-vault permission check (Windows can't express it); the rest pass. Expected to pass on the Linux VM.
+- Part 4's live check found **no structured showtimes for a movie today**. The planner now says it found no listed showtimes and won't guess, instead of blaming schedules.
+- For Part 4: `WalletPort.checkConnection` returns `'not_connected'`, while CONTRACTS.md says `'revoked'`. Pick one.
+
 **CONTRACTS.md updated:** `publish_poll` job kind, `vote_states`, `plans.template_id`, `agent_runs.task`, `PROVIDER`/`INTERNAL` errors, `PUT /plans/:id/private`, `GET`/`POST /plans/:id/messages`.
 
 **Env used by Part 2:** `DATABASE_URL`, `MODEL_API_KEY`, `MUSE_MODEL`, `MUSE_BUDGET_USD`, `APP_ENCRYPTION_KEY`, `APP_BASE_URL`, `TEAM_ADMIN_USER_IDS`, optional `DISCOVERY=fixture`.
