@@ -1,0 +1,5 @@
+{
+  "search_metadata": { "id": "fixture-extract-search" },
+  "text_content": { "text": "Public event information", "markdown": "# Public event information" },
+  "structured_data": [{ "@type": "Event", "name": "Public event information" }]
+}

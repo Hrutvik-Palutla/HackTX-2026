@@ -1,0 +1,21 @@
+{
+  "search_metadata": { "id": "fixture-movie-search" },
+  "knowledge_graph": { "title": "Dune" },
+  "showtimes": [
+    {
+      "day": "Sunday",
+      "date": "Nov 8",
+      "theaters": [
+        {
+          "name": "Sample Cinema",
+          "address": "100 Example St, Austin, TX",
+          "link": "https://www.google.com/search?q=sample+cinema",
+          "showing": [
+            { "time": ["6:45pm", "8:15pm"], "type": "Standard" },
+            { "time": ["7:15pm"], "type": "IMAX" }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@hacktx/fulfillment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts",
+    "./http": "./src/http.ts"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts ../discovery/test/*.test.ts ../integrations/link-wallet.test.ts ../../apps/booking-worker/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.routes.json",
+    "demo": "node --env-file-if-exists=../../.env.local src/demo-server.ts",
+    "demo:check": "node src/demo-check.ts",
+    "wallet:connect": "node --env-file-if-exists=../../.env.local src/wallet-connect.ts connect",
+    "wallet:status": "node --env-file-if-exists=../../.env.local src/wallet-connect.ts status",
+    "smoke:discovery": "node --env-file-if-exists=../../.env.local ../../packages/discovery/src/smoke.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "~5.9.3"
+  },
+  "engines": { "node": ">=22.18.0" }
+}

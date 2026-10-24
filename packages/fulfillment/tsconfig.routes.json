@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "module": "ESNext", "moduleResolution": "Bundler" },
+  "include": [
+    "../../apps/web/app/api/wallet/**/*.ts",
+    "../../apps/web/app/api/quotes/**/*.ts",
+    "../../apps/web/app/api/bookings/**/*.ts",
+    "../../apps/web/app/api/reimbursements/**/*.ts",
+    "../../apps/web/app/api/plans/*/quotes/**/*.ts",
+    "../../apps/web/app/api/plans/*/payment/**/*.ts",
+    "../../apps/web/app/api/plans/*/change-requests/**/*.ts"
+  ]
+}

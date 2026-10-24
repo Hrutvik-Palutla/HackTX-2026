@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Owned test checkout</title>
+  <style>
+    body { font: 16px system-ui; max-width: 34rem; margin: 3rem auto; padding: 1rem; color: #16202a; }
+    aside { padding: 1rem; background: #fff4ce; border: 1px solid #b98700; }
+    label { display: block; margin: 1rem 0; }
+    button { padding: .8rem 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Test booking fixture</h1>
+  <aside>This owned fixture uses fake money. It cannot charge a payment method or reserve a real ticket.</aside>
+  <label>Fixture total <input data-testid="fixture-total" type="text"></label>
+  <label>Attendee count <input data-testid="attendees" type="number" min="1"></label>
+  <button data-testid="place-test-order" type="button">Place fake test order</button>
+  <output data-testid="confirmation" aria-live="polite"></output>
+  <script>
+    document.querySelector('[data-testid="place-test-order"]').addEventListener('click', () => {
+      const id = 'TEST-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+      const out = document.querySelector('[data-testid="confirmation"]');
+      out.dataset.orderRef = id;
+      out.textContent = 'Test order confirmed: ' + id;
+    });
+  </script>
+</body>
+</html>
