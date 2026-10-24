@@ -4,11 +4,11 @@
 // Part 1 calls configureApi({ db, getUserId }) once (e.g. in apps/web/lib/api.ts) with its Better Auth session lookup.
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { desc, eq, inArray } from 'drizzle-orm';
-import { agentRuns, runSteps, user, type Db } from '@hacktx/db';
+import { asc, desc, eq, inArray } from 'drizzle-orm';
+import { agentRuns, messages, runSteps, user, type Db } from '@hacktx/db';
 import { City, Interval, PrivateFactValue, type ActorContext } from '@hacktx/contracts';
 import {
-  AppError, activeTally, closePlan, createPlan, listOwnFacts, listPlans, publicPlan, recordDecision, recordVote,
+  AGENT_HANDLE, AppError, activeTally, assertMember, closePlan, enqueue, open, seal, webConversation, createPlan, listOwnFacts, listPlans, publicPlan, recordDecision, recordVote,
   savePrivateFact, updateParticipants,
 } from '@hacktx/core';
 import { templates } from '@hacktx/templates';
@@ -131,6 +131,39 @@ export const getStudioRuns = route(async ({ req, db, actor }) => {
       ...r,
       estimatedCostUsd: Number(r.estimatedCostUsd),
       steps: steps.filter((s) => s.runId === r.id).sort((a, b) => a.index - b.index).map((s) => ({ ...s, estimatedCostUsd: Number(s.estimatedCostUsd) })),
+    })),
+  };
+});
+
+// ---------- web chat (supporting UI and the fallback if messaging-provider access fails) ----------
+/** Post to the plan's web group thread or your own private web thread; the agent replies asynchronously. */
+export const postMessage = route(async ({ req, db, actor, params, requestId }) => {
+  const b = await body(req, z.object({ text: z.string().trim().min(1).max(1000), scope: z.enum(['group', 'private']) }));
+  await assertMember(db, params.id!, actor.userId);
+  const conv = await webConversation(db, params.id!, b.scope, actor.userId);
+  const isPrivate = b.scope === 'private';
+  const [row] = await db.insert(messages).values({
+    conversationId: conv.id, providerMessageId: `web:${requestId}`, senderUserId: actor.userId, senderHandle: `web:${actor.userId}`,
+    isPrivate, body: isPrivate ? null : b.text, bodyEnc: isPrivate ? seal('message', b.text) : null, occurredAt: new Date(),
+  }).returning({ id: messages.id });
+  await enqueue(db, { kind: 'process_inbound', planId: params.id!, dedupeKey: `web:${row!.id}`, payload: { web: { messageId: row!.id } } });
+  return { data: { messageId: row!.id } };
+});
+
+/** The plan's web group thread plus the caller's own private thread. Poll this every ~2 s while waiting for a reply. */
+export const getMessages = route(async ({ db, actor, params }) => {
+  await assertMember(db, params.id!, actor.userId);
+  const threads = [await webConversation(db, params.id!, 'group', actor.userId), await webConversation(db, params.id!, 'private', actor.userId)];
+  const rows = await db.select().from(messages).where(inArray(messages.conversationId, threads.map((t) => t.id))).orderBy(asc(messages.occurredAt));
+  const names = new Map((await db.select({ id: user.id, name: user.name }).from(user)
+    .where(inArray(user.id, [...new Set(rows.map((r) => r.senderUserId).filter(Boolean) as string[]), actor.userId]))).map((u) => [u.id, u.name]));
+  return {
+    data: rows.map((r) => ({
+      id: r.id,
+      scope: r.isPrivate ? 'private' : 'group',
+      from: r.senderHandle === AGENT_HANDLE ? 'agent' : r.senderUserId ? { id: r.senderUserId, name: names.get(r.senderUserId) ?? 'member' } : 'unknown',
+      text: r.body ?? open('message', r.bodyEnc!),
+      at: r.occurredAt.toISOString(),
     })),
   };
 });

@@ -2,10 +2,10 @@
 // -> CAS publish -> recipient-scoped messages. The model never decides availability, price, or which venues exist.
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
-import { plans, planParticipants, planConversations, type Db } from '@hacktx/db';
+import { conversations, plans, planParticipants, planConversations, type Db } from '@hacktx/db';
 import type { Candidate, City, DiscoveryPort, Interval, PlanOption } from '@hacktx/contracts';
 import {
-  AppError, checkSlot, enqueue, enqueueMessage, tally, loadFactsForFeasibility, loadMemberAvailability, publishVersion, setStatus,
+  AppError, WEB, checkSlot, enqueue, enqueueMessage, postToConversation, tally, loadFactsForFeasibility, loadMemberAvailability, publishVersion, setStatus,
   type OptionDraft, type SlotFit,
 } from '@hacktx/core';
 import { getTemplate } from '@hacktx/templates';
@@ -30,9 +30,7 @@ const Picks = z.object({
   options: z.array(z.object({
     candidateId: z.string(),
     startAt: z.string().nullable(),
-    title: z.string(),
     publicExplanation: z.string(),
-    uncertainties: z.array(z.string()),
   })), // no max: code keeps the first 3 valid picks, so extra or invalid picks don't fail the run
 });
 
@@ -120,8 +118,9 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
       messages: [
         { role: 'system', content: `${template.systemInstruction}
 Pick up to 3 useful, distinct options from the candidates by id. For a candidate with startLocal=null, set startAt to an
-ISO 8601 UTC time inside the window that suits the activity; otherwise set startAt null. Explanations: 1-2 sentences,
-mention time, place, price/unknowns and the tradeoff. Do not mention any individual's constraints.` },
+ISO 8601 UTC time inside the window that suits the activity; otherwise set startAt null. Explanation: one short sentence on the real difference versus the other options (format, time of day, listed price,
+location), using ONLY facts present in the candidate data; do not invent atmosphere, amenities or reviews. Title, time,
+price and warnings are shown separately, so do not repeat them. Do not mention any individual's constraints.` },
         { role: 'user', content: JSON.stringify({
           request: plan.request,
           city: city.label,
@@ -145,11 +144,12 @@ mention time, place, price/unknowns and the tradeoff. Do not mention any individ
       const byId = new Map(feasible.list.map((f) => [f.c.id, f]));
       const drafts: OptionDraft[] = [];
       const used = new Set<string>();
-      const build = (f: Feasible, slot: Interval, fit: SlotFit, title: string, explanation: string, extra: string[]) => {
+      // Title comes from the source (keeps the movie name and any FIXTURE label); the model only writes the explanation.
+      const build = (f: Feasible, slot: Interval, fit: SlotFit, explanation: string, extra: string[]) => {
         used.add(f.c.id);
         drafts.push({
           label: (['A', 'B', 'C'] as const)[drafts.length]!,
-          title: title.slice(0, 120) || f.c.title,
+          title: `${f.c.title} at ${f.c.venueName}`.slice(0, 160),
           candidateIds: [f.c.id],
           startAt: slot.startAt,
           endAt: slot.endAt,
@@ -177,13 +177,13 @@ mention time, place, price/unknowns and the tradeoff. Do not mention any individ
           if (fit.fit === 'conflict') continue;
           f.notes.push('Opening hours not verified for this time');
         }
-        build(f, slot, fit!, p.title, p.publicExplanation, p.uncertainties.slice(0, 4).map((u) => u.slice(0, 160)));
+        build(f, slot, fit!, p.publicExplanation, []);
       }
       if (!drafts.length) {
         for (const f of feasible.list) {
           if (drafts.length >= 3) break;
           if (!f.slot || !f.fit || used.has(f.c.id)) continue;
-          build(f, f.slot, f.fit, f.c.title, `${f.c.title} at ${f.c.venueName}, ${localTime(f.slot.startAt, tz)}. Price: ${money(f.c)}.`, []);
+          build(f, f.slot, f.fit, `${f.c.format ?? f.c.kind.replace('_', ' ')} listed by the source.`, []);
         }
       }
       return drafts;
@@ -204,9 +204,9 @@ mention time, place, price/unknowns and the tradeoff. Do not mention any individ
     const versionId = published.version.id;
     await notifyPlan(db, plan.id, `options:${versionId}`, formatOptions(published.options, job.reason), versionId);
     // Part 3's publish_poll handler posts a native poll (labels in A,B,C order) per group chat, then calls registerPoll.
-    for (const g of await db.select().from(planConversations).where(and(eq(planConversations.planId, plan.id), eq(planConversations.audience, 'group')))) {
-      await enqueue(db, { kind: 'publish_poll', planId: plan.id, dedupeKey: `publish_poll:${versionId}:${g.conversationId}`,
-        payload: { planId: plan.id, versionId, conversationId: g.conversationId, labels: published.options.map((o) => `${o.label}) ${o.title}`.slice(0, 80)) } });
+    for (const g of (await planGroupConversations(db, plan.id)).filter((c) => c.provider !== WEB)) {
+      await enqueue(db, { kind: 'publish_poll', planId: plan.id, dedupeKey: `publish_poll:${versionId}:${g.id}`,
+        payload: { planId: plan.id, versionId, conversationId: g.id, labels: published.options.map((o) => `${o.label}) ${o.title}`.slice(0, 80)) } });
     }
     await enqueue(db, { kind: 'poll_reminder', planId: plan.id, dedupeKey: `poll_reminder:${versionId}`,
       runAfter: new Date(Date.now() + POLL_REMINDER_MS), payload: { planId: plan.id, versionId } });
@@ -233,13 +233,12 @@ export function formatOptions(options: PlanOption[], repairReason?: string) {
 
 /** Send the same public text to the plan's group chat, or privately to each participant in DM-fallback mode. */
 export async function notifyPlan(db: Db, planId: string, key: string, text: string, versionId?: string) {
-  const groups = await db.select().from(planConversations)
-    .where(and(eq(planConversations.planId, planId), eq(planConversations.audience, 'group')));
+  const groups = await planGroupConversations(db, planId);
   for (const c of groups) {
-    await enqueueMessage(db, { recipient: { kind: 'group', conversationId: c.conversationId }, text, effectKey: `${planId}:${key}:${c.conversationId}`, planId, versionId: versionId ?? null });
+    await postToConversation(db, c, text, { effectKey: `${planId}:${key}:${c.id}`, planId, versionId: versionId ?? null });
   }
-  if (groups.length) return;
-  // No group chat (creation unsupported/failed): same options privately to every resolved participant.
+  if (groups.some((c) => c.provider !== WEB)) return;
+  // No messaging group chat (creation unsupported/failed): same options privately to every resolved participant.
   const people = await db.select({ userId: planParticipants.userId }).from(planParticipants).where(eq(planParticipants.planId, planId));
   for (const p of people) {
     if (!p.userId) continue;
@@ -256,4 +255,10 @@ export async function runPollReminder(db: Db, job: { planId: string; versionId: 
   if (t.voters >= people.length) return { sent: false };
   await notifyPlan(db, plan.id, `reminder:${job.versionId}`, `Quick nudge: ${people.length - t.voters} of ${people.length} still need to vote on the options above. No rush, nothing gets booked without the group.`);
   return { sent: true };
+}
+
+async function planGroupConversations(db: Db, planId: string) {
+  return db.select({ id: conversations.id, kind: conversations.kind, provider: conversations.provider }).from(planConversations)
+    .innerJoin(conversations, eq(conversations.id, planConversations.conversationId))
+    .where(and(eq(planConversations.planId, planId), eq(planConversations.audience, 'group')));
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { conversations, jobs, messagingIdentities, plans, voteStates } from '@hacktx/db';
+import { agentRuns, conversations, jobs, messagingIdentities, outbox, plans, voteStates } from '@hacktx/db';
 import { applyPollVote, createPlan, publishVersion, registerPoll, requestRepair, resumeWaitingPlans, updateParticipants, AppError } from '@hacktx/core';
 import { configureApi, getPlan, putVote, putPrivateFact, getPrivate, getStudioRuns, createPlanRoute } from '@hacktx/api';
 import { runPollReminder } from '@hacktx/agent';
@@ -115,5 +115,50 @@ describe('polls, roster, resume, reminders', () => {
     expect((await runPollReminder(db, { planId: plan.id, versionId: version.id })).sent).toBe(true);
     await requestRepair(db, plan.id, 0, 'changed');
     expect((await runPollReminder(db, { planId: plan.id, versionId: version.id })).sent).toBe(false);
+  });
+});
+
+describe('web chat + budget', () => {
+  it('web messages reach the agent as the session user; private threads stay private', async () => {
+    const { db, plan, u, login } = await setup();
+    const { postMessage, getMessages } = await import('@hacktx/api');
+    const { handleInbound } = await import('@hacktx/agent');
+    login(u.Mark!);
+    const r = await postMessage(req('POST', { text: 'only free after 7pm, keep it quiet', scope: 'private' }), P(plan.id));
+    expect(r.status).toBe(200);
+    const job = (await db.select().from(jobs)).find((j) => j.kind === 'process_inbound')!;
+    const seen: string[] = [];
+    const muse = {
+      model: 'fake',
+      async chat({ messages }: { messages: { content?: unknown }[] }) {
+        seen.push(JSON.stringify(messages));
+        return { message: { role: 'assistant', content: 'Noted privately.', refusal: null } as never, usage: { inputTokens: 1, outputTokens: 1, estimatedCostUsd: 0 } };
+      },
+      async structured() { throw new Error('unused'); },
+    };
+    expect(await handleInbound({ db, muse: muse as never }, job.payload as never)).toEqual({ status: 'ok', replied: true });
+    expect(seen[0]).toContain('only free after 7pm');
+
+    const mine = ((await (await getMessages(req('GET'), P(plan.id))).json()) as { data: { from: unknown; text: string; scope: string }[] }).data;
+    expect(mine.map((m) => [m.scope, m.text])).toEqual([['private', 'only free after 7pm, keep it quiet'], ['private', 'Noted privately.']]);
+    login(u.Alex!);
+    const theirs = ((await (await getMessages(req('GET'), P(plan.id))).json()) as { data: unknown[] }).data;
+    expect(JSON.stringify(theirs)).not.toContain('7pm');
+    expect((await db.select().from(outbox)).some((o) => o.effectKey.startsWith('reply:'))).toBe(false); // web delivery needs no outbox
+  });
+
+  it('refuses new runs past the Muse budget', async () => {
+    const { db, plan } = await setup();
+    const { RunRecorder } = await import('@hacktx/agent');
+    const { templates } = await import('@hacktx/templates');
+    process.env.MUSE_BUDGET_USD = '0.01';
+    try {
+      await db.insert(agentRuns).values({ planId: plan.id, task: 'plan', templateId: 'movie-night', templateVersion: 1, model: 'm', inputRevision: 0, status: 'ok', estimatedCostUsd: '0.02' });
+      const e = await RunRecorder.start(db, { planId: plan.id, task: 'plan', template: templates['movie-night'], model: 'm', inputRevision: 0 }).catch((x) => x);
+      expect(e).toBeInstanceOf(AppError);
+      expect((e as AppError).code).toBe('BUDGET_LIMIT');
+    } finally {
+      delete process.env.MUSE_BUDGET_USD;
+    }
   });
 });

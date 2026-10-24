@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { z } from 'zod';
 import { agentRuns, conversations, messagingIdentities, outbox, planConversations, plans, runSteps, voteStates } from '@hacktx/db';
-import { createPlan, publishVersion, savePrivateFact } from '@hacktx/core';
+import { createPlan, postToConversation, publishVersion, savePrivateFact } from '@hacktx/core';
 import { fixtureDiscovery, handleInbound, runPlanJob, type ChatMessage, type Muse } from '@hacktx/agent';
 import { testDb, seedUsers, befriend, austin, web } from '../../core/test/helpers';
 
@@ -45,7 +45,7 @@ async function setup() {
 }
 
 const intent = { kind: 'movie', movieTitle: 'Dune', searchQuery: 'Dune showtimes', durationMinutes: null };
-const pick = (candidateId: string) => ({ candidateId, startAt: null, title: `pick ${candidateId}`, publicExplanation: 'Good choice.', uncertainties: [] });
+const pick = (candidateId: string) => ({ candidateId, startAt: null, publicExplanation: `why ${candidateId}` });
 
 describe('planner', () => {
   it('drops conflicting and invented candidates, copies prices from sources, publishes and notifies the group', async () => {
@@ -65,7 +65,7 @@ describe('planner', () => {
 
     const msgs = await db.select().from(outbox);
     expect(msgs).toHaveLength(1);
-    expect(msgs[0]!.body).toContain('A) pick fx-m2');
+    expect(msgs[0]!.body).toContain('A) FIXTURE: Dune (IMAX) at Fixture Cinema South');
     const [run] = await db.select().from(agentRuns);
     expect(run!.status).toBe('ok');
     expect((await db.select().from(runSteps)).map((s) => s.name)).toEqual(['extract_intent', 'discover_candidates', 'feasibility', 'propose_options', 'validate_options', 'publish_version']);
@@ -95,6 +95,7 @@ describe('conversation', () => {
       { label: 'B', title: 'B', candidateIds: ['y'], startAt: '2026-10-31T23:00:00.000Z', endAt: '2026-11-01T01:00:00.000Z', timeZone: 'America/Chicago', timeline: [], estimatedPerPerson: null, priceKind: 'unknown', fit: 'fits_known_constraints', uncertainties: [], publicExplanation: '', sourceIds: [] },
     ] });
     await db.insert(messagingIdentities).values({ userId: u.Mark!, provider: 'linq', handle: '+15125550101', kind: 'phone', verifiedAt: new Date() });
+    await postToConversation(db, conv, '[agent-visible check] options A and B', { effectKey: 'opts', planId: plan.id });
 
     const muse = fakeMuse({ chat: [
       { tool_calls: [{ id: 'c1', type: 'function', function: { name: 'record_vote', arguments: JSON.stringify({ acceptableLabels: ['B'], favoriteLabel: 'B', noneAcceptable: false }) } }] },
@@ -103,11 +104,13 @@ describe('conversation', () => {
     const inbound = { provider: 'linq', eventId: 'evt9', messageId: 'm9', conversationExternalId: 'chat1', conversationKind: 'group', senderHandle: '+15125550101', senderKind: 'phone', text: 'B works, favorite B', occurredAt: '2026-10-30T18:00:00.000Z', replyToMessageId: null } as const;
     const r = await handleInbound({ db, muse }, { sendingLine: '+15125550000', message: inbound });
     expect(r).toEqual({ status: 'ok', replied: true });
+    expect(JSON.stringify(muse.seen[0])).toContain('[agent-visible check]');
 
     const [state] = await db.select().from(voteStates).where(eq(voteStates.versionId, version.id));
     expect(state!.userId).toBe(u.Mark);
     expect(state!.favoriteOptionId).toBe(options[1]!.id);
     const reply = (await db.select().from(outbox)).find((o) => o.effectKey.startsWith('reply:'));
+    expect(JSON.stringify(muse.seen[0])).toContain('you (agent): [agent-visible check]');
     expect(reply!.recipient).toEqual({ kind: 'group', conversationId: conv.id });
 
     // retried webhook delivery: same message row, no duplicate reply

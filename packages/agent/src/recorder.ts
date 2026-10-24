@@ -1,9 +1,13 @@
 // Real run records for Studio (Northmark): every model/tool/validation/state step with timing, usage and
 // a redacted summary. Also enforces the template's per-run limits across the whole run.
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, sum } from 'drizzle-orm';
 import { agentRuns, runSteps, type Db } from '@hacktx/db';
 import type { AgentTemplate, RunStep } from '@hacktx/contracts';
+import { AppError } from '@hacktx/core';
 import type { Usage } from './muse';
+
+// Total estimated Muse spend across all runs before new runs are refused (BUDGET_LIMIT). Credits are finite.
+const budgetUsd = () => Number(process.env.MUSE_BUDGET_USD ?? 20);
 
 export class LimitError extends Error {}
 
@@ -16,6 +20,8 @@ export class RunRecorder {
   private constructor(private db: Db, readonly runId: string, readonly template: AgentTemplate, readonly inputRevision: number) {}
 
   static async start(db: Db, input: { planId: string | null; task: string; template: AgentTemplate; model: string; inputRevision: number }) {
+    const [{ spent } = { spent: null }] = await db.select({ spent: sum(agentRuns.estimatedCostUsd) }).from(agentRuns);
+    if (Number(spent ?? 0) >= budgetUsd()) throw new AppError('BUDGET_LIMIT', `Muse budget of ${budgetUsd()} USD reached`);
     const [run] = await db.insert(agentRuns).values({
       planId: input.planId, task: input.task, templateId: input.template.id, templateVersion: input.template.version,
       model: input.model, inputRevision: input.inputRevision, status: 'running',

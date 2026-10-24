@@ -220,7 +220,7 @@ Use foreign keys and timestamps throughout. Sensitive values are encrypted with 
 | `friend_invites` | Inviter, encrypted recipient phone + keyed lookup digest, token hash, state, expires_at; acceptance binds the authenticated recipient. |
 | `conversations` | Provider, external chat ID, sending line, kind, active_plan_id; unique provider/line/chat. |
 | `conversation_members` | Conversation, messaging identity or unresolved handle, current membership. Never used alone as friendship proof. |
-| `plans` | Organizer, request, city/zone/date window, status, input_revision, active_version_id, selected_option_id, mode. |
+| `plans` | Organizer, request, template_id (`movie-night`/`local-outing`), city/zone/date window, status, input_revision, active_version_id, selected_option_id, mode. |
 | `plan_participants` | Plan, user nullable while invited, invite reference, requested name, attendance state; unique `(plan,user)` when resolved. All resolve before proposals. |
 | `plan_conversations` | Plan, conversation, audience/owner; one group or several private conversations can point to the same plan. |
 | `messages` | Provider message ID, conversation, sender, timestamp, encrypted private body or public body, reply reference; unique provider/line/message. Store only received context needed for the plan. |
@@ -229,7 +229,7 @@ Use foreign keys and timestamps throughout. Sensitive values are encrypted with 
 | `availability_snapshots` | User/plan, normalized intervals, source type, fetched_at, validity/errors; never calendar titles. |
 | `sources`, `candidates` | Normalized source metadata and candidate facts/evidence; search/extract cache keys and expiry. Raw payloads redacted and size bounded. |
 | `plan_versions`, `plan_options` | Immutable version number + input revision + options; unique `(plan,version_number)` and `(version,label)`. |
-| `polls`, `votes` | Poll message ID to version mapping; unique vote `(version,user,option)`; favorite per `(version,user)`; superseded poll flag. |
+| `polls`, `votes`, `vote_states` | Poll message ID to version mapping; superseded poll flag. `votes`: one row per acceptable option, unique `(version,user,option)`. `vote_states`: favorite, noneAcceptable, and objection per `(version,user)`. |
 | `plan_decisions` | Selection, named attendees, author/evidence message IDs, version, recorded_at. |
 | `booking_quotes`, `buyer_authorizations`, `bookings` | Types above; unique submitted authorization/effect binding; actual merchant status separate from wallet status. |
 | `wallet_connections` | User, provider, encrypted auth context, status; no card number/CVC. |
@@ -239,7 +239,7 @@ Use foreign keys and timestamps throughout. Sensitive values are encrypted with 
 | `jobs` | Kind, plan, dedupe_key, payload, run_after, lease_until, attempts, state; unique dedupe_key. Index runnable jobs. |
 | `outbox` | Typed recipient, plan/version, effect key, encrypted private body, provider message ID, delivery status. OTP bodies expire and are removed after delivery/expiry. |
 | `external_effects` | Unique operation key, kind, plan/quote, reserved/inflight/confirmed/unknown, provider request ID, reconciliation data. |
-| `agent_templates`, `agent_runs`, `run_steps` | Template configuration/version, model, input revision, redacted outcomes, token/search/cost counters. No raw private prompts. |
+| `agent_templates`, `agent_runs`, `run_steps` | Template configuration/version, model, run task (`plan`/`repair`/`discuss`), input revision, redacted outcomes, token/search/cost counters. No raw private prompts. |
 | `usage_reservations` | Provider, run, reserved/actual cost or quota units; prevents concurrent runs overspending local envelopes. |
 
 One relational store is intentional. Use JSONB for evolving provider payloads/typed fact values, not for relationships that need membership checks or uniqueness. Restrict app-side repositories by actor and return projection-specific DTOs. Do not expose a generic SQL tool to Muse.
@@ -269,12 +269,14 @@ All routes below are `/api` paths except health. Use `{data,revision?}` for succ
 | `DELETE /calendar/connection` | Disconnect and delete token | Own session |
 | `POST /plans` | `{request,participantUserIds?,participantNames?,conversationId?,mode}` -> plan/job | Requester; core resolves friends before planning |
 | `GET /plans`, `GET /plans/:id` | Membership-filtered public projections | Plan member/organizer |
-| `POST /plans/:id/messages` | `{text,scope:'group'\|'private',expectedRevision}` | Member; private scope belongs to actor |
+| `POST /plans/:id/messages` | `{text,scope:'group'\|'private'}` -> message ID; agent replies asynchronously in the same web thread | Member; private scope belongs to actor |
+| `GET /plans/:id/messages` | Plan's web group thread + caller's own private thread | Member; never another member's private thread |
 | `PUT /plans/:id/vote` | Version + acceptable IDs/favorite/none | Actor's own vote only |
 | `POST /plans/:id/decision` | Version, option, named attendees, evidence IDs | Member; core verifies group context; no financial authority implied |
 | `PATCH /plans/:id/participants` | Added/removed users + expectedRevision | Organizer before booking; new users must connect |
 | `POST /plans/:id/close` | expectedRevision | Organizer for unbooked plan |
 | `GET /plans/:id/private` | Own private projection | Actor only |
+| `PUT /plans/:id/private` | `{fact: PrivateFactValue, expectedRevision?}`: manual availability, limit, or preference (no-calendar fallback); re-plans if options exist | Actor only; owner is always the session user |
 | `GET /plans/:id/payment` | Own share/buyer view | Projection-specific |
 | `POST /plans/:id/quotes` | `{versionId,optionId,buyerUserId,seatPreference?,expectedRevision}` -> job | Member; buyer confirms their role |
 | `POST /wallet/connect` | Start provider user-link flow | Buyer account + session-bound nonce |
@@ -292,7 +294,7 @@ All routes below are `/api` paths except health. Use `{data,revision?}` for succ
 | `GET /studio/templates`, `GET /studio/runs` | Redacted data | Team allowlist |
 | `GET /health/live`, `GET /health/ready` | Minimal health result | Public, no private configuration |
 
-Conflict rules: stale revision/version returns `409 STALE_PLAN`; unauthorized actor is `403`; invalid fields `400`; unresolved prerequisites `422`; local spend/quota ceiling `429 BUDGET_LIMIT` or `429 QUOTA_LIMIT`. A private resource not visible to the caller returns a generic `404`. Phone signup/login responses are generic. External provider errors are mapped to redacted retryable/nonretryable errors.
+Conflict rules: stale revision/version returns `409 STALE_PLAN`; unauthorized actor is `403`; invalid fields `400`; unresolved prerequisites `422`; local spend/quota ceiling `429 BUDGET_LIMIT` or `429 QUOTA_LIMIT`; upstream provider failure `502 PROVIDER`; unexpected server error `500 INTERNAL`. A private resource not visible to the caller returns a generic `404`. Phone signup/login responses are generic. External provider errors are mapped to redacted retryable/nonretryable errors.
 
 ## 7. Normalized events and adapter ports
 
@@ -358,7 +360,7 @@ Adapters may report a capability false even when the vendor advertises it: the a
 
 ## 8. Jobs, tool effects, and permission checks
 
-Job kinds: `process_inbound`, `resume_connections`, `plan`, `repair`, `send_outbox`, `poll_reminder`, `refresh_wallet`, `quote_booking`, `submit_booking`, `reconcile_booking`, `sync_calendar`, `create_reimbursements`, `handle_change`.
+Job kinds: `process_inbound`, `resume_connections`, `plan`, `repair`, `send_outbox`, `poll_reminder`, `refresh_wallet`, `quote_booking`, `submit_booking`, `reconcile_booking`, `sync_calendar`, `create_reimbursements`, `handle_change`, `publish_poll` (payload `{planId, versionId, conversationId, labels}`; Part 3 posts the native poll in A, B, C order and calls `registerPoll`).
 
 For every job: claim lease -> read current context/revision -> bounded external work -> validate -> short transaction to compare revision, write state/effects, and enqueue outgoing work -> complete. Refresh the lease while active. Reclaimed jobs must tolerate repeating read work; mutations use effect keys and authoritative provider reconciliation.
 
