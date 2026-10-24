@@ -1,6 +1,6 @@
 # Shared Technical Contracts
 
-Proposed v1 contract for the architecture in [ARCHITECTURE.md](ARCHITECTURE.md). Planner/backend owns this file and `packages/contracts`; schema changes are reviewed with the integration lead. The declarations below describe our application, not vendor SDK methods. Implement them as Zod schemas and inferred TypeScript types. Dependency versions and actual vendor payload fixtures are pinned during the access spikes.
+Proposed v1 contract for the architecture in [ARCHITECTURE.md](ARCHITECTURE.md). Part 2 (Agent & Backend) owns this file, `packages/contracts`, and shared database migrations; other parts supply their feature requirements. Cross-part schema changes are reviewed with affected owners. See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the four selectable parts and route ownership. The declarations below describe our application, not vendor SDK methods. Implement them as Zod schemas and inferred TypeScript types. Dependency versions and actual vendor payload fixtures are pinned during the access spikes.
 
 ## 1. Representation and invariants
 

@@ -11,7 +11,7 @@ Build one TypeScript application with a web process, a durable background worker
 | Runtime and repo | Node.js 24 LTS; pnpm workspaces; TypeScript | One language and shared types across the team. Pin exact dependency versions and the container image during scaffolding. |
 | Web | Next.js 16 App Router, React, Tailwind, shadcn/ui | Signup, friends, private settings, plan details, payment requests, and run inspector; Route Handlers serve the HTTP API. |
 | Authentication | Better Auth phone-number plugin; OTP delivered privately through the messaging adapter | Phone login without requiring another paid auth/SMS vendor. |
-| Main messaging | Linq V3 iMessage API on its advertised seven-day Pro trial | Closest documented match for existing group chats, outbound group creation, private messages, and native polls. Trial entitlement must pass the initial spike. |
+| Main messaging | Linq V3 iMessage API; start on Hobby, use the free Pro trial only if needed | Test the actual account's DM/group/poll capabilities before choosing a tier. Hobby's contact capacity covers the team; group entitlement is the access question. |
 | Messaging fallback | Telegram Bot API, only if Linq access fails | Free group discussions and polls, with explicit onboarding differences described below. Build one live adapter first. |
 | Model | Meta Model API, `muse-spark-1.3`, Standard mode | Use the supplied Muse credits for extraction, tools, reasoning, and explanations. Keep the model ID configurable if the event key exposes a different Spark version. |
 | Discovery | Supplied SerpApi account: Google Search/showtimes, Maps, Events, Extract | Real candidates and sources; no additional search vendor. |
@@ -72,10 +72,13 @@ apps/
   worker/                 # inbound processing, agent loop, jobs, outbox
   booking-worker/         # bounded Playwright checkout, trusted payment fill
 packages/
+  accounts/               # profile, session integration, friendship services
   contracts/              # Zod schemas, DTOs, provider-port types
   db/                     # Drizzle schema, SQL migrations, repositories
-  core/                   # friend rules, plan transitions, slots, votes, splits
+  core/                   # plan transitions, slots, votes, durable jobs
   agent/                  # Muse client, prompts, tool registry, context builders
+  discovery/              # sourced candidate normalization and cache
+  fulfillment/            # quotes, booking, split arithmetic, repayment services
   integrations/
     messaging/linq.ts
     messaging/telegram.ts # implement only after an actual fallback decision
@@ -87,7 +90,7 @@ packages/
 infra/                    # Compose, Caddy, deploy/backup commands
 ```
 
-Imports flow from apps to packages; the domain layer never imports a provider SDK. `contracts` and database migrations have one owner. The web app and messaging agent call the same core commands so a button click cannot bypass rules that chat must obey.
+Imports flow from apps to packages; the domain layer never imports a provider SDK. `contracts` and database migrations have one owner. The web app and messaging agent call the same core commands so a button click cannot bypass rules that chat must obey. The four independently selectable parts and exact file/route ownership are in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md); Part 2 owns shared contracts/schema, Part 1 owns the scaffold, Part 3 coordinates deployment, and Part 4 owns discovery/fulfillment.
 
 ## 5. Signup, identity, and friendships
 
@@ -106,7 +109,7 @@ If the transport cannot deliver an OTP to the phone, verification stays incomple
 
 ### Primary adapter: Linq V3
 
-Linq's published Pro plan includes group messaging and advertises a seven-day trial, with no credit card required to sign up. The paid starting price is $260/month, outside this team's budget. Use the trial only if its actual entitlement covers groups and outbound invitations; otherwise use the fallback. Free Hobby access is not evidence of free group access. [Pricing](https://linqapp.com/s/pricing).
+Start on Linq Hobby: the advertised 20-contact capacity covers the team and a small demo. Its page says full API access but also lists group messaging as a Pro addition, so test actual group/poll access rather than declaring Hobby insufficient. If a required feature is gated, try the advertised seven-day Pro trial; if neither usable tier supports the flow, use the transport fallback. Paid Pro starts at $260/month and is outside the team's budget. [Pricing](https://linqapp.com/s/pricing).
 
 The group API documents creation through `POST /api/partner/v3/chats`, subsequent chat messages, and participant management. Initial chat creation must contain plain text without a link; send setup links afterward. Persist the provider chat ID. Native polls are created only in an existing chat, have add-only options, and support per-option votes. A changed plan gets a new poll; stale poll votes are ignored in our database. [Group API](https://docs.linqapp.com/channel/imessage/guides/chats/group-chats/), [poll API](https://docs.linqapp.com/channel/imessage/guides/messaging/polls/).
 
@@ -290,7 +293,7 @@ Team ceiling: $40 total, funded by contributions of up to $10 from each teammate
 | SerpApi | $0 from supplied access | Check remaining quota using Account API; cache/bound searches; no new paid subscription planned. |
 | Tiger Cloud | $0 on advertised 30-day trial/event access | Paid service starts at $30/month; move to local/self-hosted Postgres if unavailable. |
 | Vultr | $0 if MLH credit redeemed | Reserve up to $5 for short-lived hosting if necessary; inspect the account's actual minimum charge first. |
-| Linq | $0 only through usable seven-day Pro trial | No credit card required to sign up per public pricing; no $260 production subscription within this budget. Switch transports if entitlement fails. |
+| Linq | $0 through Hobby if its required calls work; otherwise the free Pro trial | Start Hobby-first. No $260 production subscription within this budget; switch transports if free access cannot support the flow. |
 | Link wallet | No paid developer subscription planned; development uses test mode | Account eligibility and any live fees must be checked; any extra API fee comes from the reserve, not an assumed grant. |
 | Auth, Calendar, splits | $0 additional API line item in the planned path | Messaging delivers OTPs; calendar usage stays small; repayment links do not imply fee-free transfers. |
 | Browser | $0 on our VM; optional Browserbase $20 Developer month | Browserbase Free advertises 1 hour/15-minute sessions; use that first if needed. No separate browser-model spend. |

@@ -195,14 +195,14 @@ Show actual progress (“Checking availability”, “Finding places”, “Chec
 
 ## Team ownership
 
-| Person | Owns | First handoff |
+| Selectable part — owner unassigned | Owns | First handoff |
 |---|---|---|
-| You — integration lead | Messaging/access spike, Google Calendar, deployment, integration health, final demo recording | Proven messaging capabilities; two actual free/busy responses; deployed URL; manual fallback |
-| Person B — frontend/design | Signup/friends/private details/plan views, discussion/voting/payment/replan UI, pitch lead | Clickable signup → connected friends → plan options flow against the agreed contract |
-| Person C — planner/backend | Schema, identity linking, friend rules, contextual plan lifecycle, share calculation, Muse orchestration, deterministic validation | Connected friends + context → versioned options, votes, and group decisions |
-| Person D — discovery/platform | Movie/showtime and venue discovery, normalization/caching, seat/payment/booking feasibility; Northmark templates/run inspector | Real sourced candidates and verified payment/booking capabilities; then reusable template/run proof |
+| Part 1 — App & Accounts | Web screens, Better Auth, profiles, friend connections and their handlers, pitch presentation | Scaffold and signup/friends/plan views against typed contracts |
+| Part 2 — Agent & Backend | Shared schema/contracts, durable worker, Muse, plan lifecycle, votes, availability checks, repair, templates/run records | Shared types/DB/queue helpers and a working structured Muse call |
+| Part 3 — Messaging, Calendar & Deployment | Hobby-first Linq spike, transport/polls/OTP delivery, Google Calendar, deployment, integration recording | Actual phone messages/votes, public shell, and Google OAuth spike |
+| Part 4 — Discovery, Booking & Payments | SerpApi candidates, quotes/seats, Link, booking worker, exact shares, private repayment services | Real normalized candidates first; then buyer/booking path |
 
-The integration lead merges shared changes. The planner/backend owner owns CONTRACTS.md. Each owner updates only their own STATUS.md rows. Review shared schema changes together. Assign optional integrations only when an owner's core handoff is complete.
+Each person picks one part; no person is assigned in advance. [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) defines the exact scope, file ownership, handoffs, and completion checks. Part 1 owns root scaffold/lockfile changes, Part 2 owns CONTRACTS.md and migrations, and Part 3 coordinates deployment. Review cross-part changes together. Assign optional integrations only when an owner's core handoff is complete. References to the integration/frontend/planner/discovery roles in the retained schedule map to Parts 3/1/2/4 respectively.
 
 ## Schedule — Austin time, October 24–25
 
