@@ -1,0 +1,21 @@
+{
+  "name": "@hacktx/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@hacktx/contracts": "workspace:*",
+    "@hacktx/core": "workspace:*",
+    "@hacktx/db": "workspace:*",
+    "@hacktx/templates": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@hacktx/agent": "workspace:*",
+    "@electric-sql/pglite": "0.5.11"
+  }
+}

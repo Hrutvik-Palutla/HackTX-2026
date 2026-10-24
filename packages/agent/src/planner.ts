@@ -5,7 +5,7 @@ import { and, eq } from 'drizzle-orm';
 import { plans, planParticipants, planConversations, type Db } from '@hacktx/db';
 import type { Candidate, City, DiscoveryPort, Interval, PlanOption } from '@hacktx/contracts';
 import {
-  AppError, checkSlot, enqueueMessage, loadFactsForFeasibility, loadMemberAvailability, publishVersion, setStatus,
+  AppError, checkSlot, enqueue, enqueueMessage, tally, loadFactsForFeasibility, loadMemberAvailability, publishVersion, setStatus,
   type OptionDraft, type SlotFit,
 } from '@hacktx/core';
 import { getTemplate } from '@hacktx/templates';
@@ -17,6 +17,7 @@ export type PlannerDeps = { db: Db; muse: Muse; discovery: DiscoveryPort; now?: 
 const MAX_CANDIDATES = 15;
 const DEFAULT_DURATION_MIN = 120;
 const ARRIVAL_BUFFER_MIN = 15;
+const POLL_REMINDER_MS = 30 * 60_000;
 
 const Intent = z.object({
   kind: z.enum(['movie', 'outing']),
@@ -200,7 +201,15 @@ mention time, place, price/unknowns and the tradeoff. Do not mention any individ
       publishVersion(db, { planId: plan.id, inputRevision: plan.inputRevision, runId: rec.runId, options }),
     (r) => ({ summary: `version ${r.version.versionNumber}` }));
 
-    await notifyPlan(db, plan.id, `options:${published.version.id}`, formatOptions(published.options, job.reason), published.version.id);
+    const versionId = published.version.id;
+    await notifyPlan(db, plan.id, `options:${versionId}`, formatOptions(published.options, job.reason), versionId);
+    // Part 3's publish_poll handler posts a native poll (labels in A,B,C order) per group chat, then calls registerPoll.
+    for (const g of await db.select().from(planConversations).where(and(eq(planConversations.planId, plan.id), eq(planConversations.audience, 'group')))) {
+      await enqueue(db, { kind: 'publish_poll', planId: plan.id, dedupeKey: `publish_poll:${versionId}:${g.conversationId}`,
+        payload: { planId: plan.id, versionId, conversationId: g.conversationId, labels: published.options.map((o) => `${o.label}) ${o.title}`.slice(0, 80)) } });
+    }
+    await enqueue(db, { kind: 'poll_reminder', planId: plan.id, dedupeKey: `poll_reminder:${versionId}`,
+      runAfter: new Date(Date.now() + POLL_REMINDER_MS), payload: { planId: plan.id, versionId } });
     await rec.finish('ok');
     return { status: 'published' as const, versionId: published.version.id, options: published.options };
   } catch (e) {
@@ -236,4 +245,15 @@ export async function notifyPlan(db: Db, planId: string, key: string, text: stri
     if (!p.userId) continue;
     await enqueueMessage(db, { recipient: { kind: 'private', userId: p.userId }, text, effectKey: `${planId}:${key}:${p.userId}`, planId, versionId: versionId ?? null });
   }
+}
+
+/** One gentle reminder per version. No-op if the version is obsolete, decided, or everyone has voted. */
+export async function runPollReminder(db: Db, job: { planId: string; versionId: string }) {
+  const [plan] = await db.select().from(plans).where(eq(plans.id, job.planId));
+  if (!plan || plan.activeVersionId !== job.versionId || plan.status !== 'voting') return { sent: false };
+  const t = await tally(db, job.versionId);
+  const people = (await db.select({ userId: planParticipants.userId }).from(planParticipants).where(eq(planParticipants.planId, plan.id))).filter((p) => p.userId);
+  if (t.voters >= people.length) return { sent: false };
+  await notifyPlan(db, plan.id, `reminder:${job.versionId}`, `Quick nudge: ${people.length - t.voters} of ${people.length} still need to vote on the options above. No rush, nothing gets booked without the group.`);
+  return { sent: true };
 }

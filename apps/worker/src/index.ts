@@ -1,12 +1,14 @@
 // Durable worker: claims Postgres jobs with leases, runs registered handlers, retries with backoff.
 import { createDb } from '@hacktx/db';
 import { claim, complete, fail, heartbeat, AppError } from '@hacktx/core';
-import { createMuse, fixtureDiscovery, handleInbound, runPlanJob, type InboundJob } from '@hacktx/agent';
+import { createMuse, fixtureDiscovery, handleInbound, runPlanJob, runPollReminder, type InboundJob } from '@hacktx/agent';
 import type { DiscoveryPort, JobKind } from '@hacktx/contracts';
 import { handlers, register, type JobHandler } from './registry';
 
 const { db, pool } = createDb();
-const muse = createMuse();
+// Lazy: non-AI jobs (reminders, Part 3/4 handlers) still run before MODEL_API_KEY exists.
+let museClient: ReturnType<typeof createMuse> | null = null;
+const muse = () => (museClient ??= createMuse());
 const workerId = `worker-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 
 // Part 4 replaces this with the SerpApi DiscoveryPort. Fixtures are opt-in and labeled FIXTURE everywhere.
@@ -18,11 +20,12 @@ if (process.env.DISCOVERY === 'fixture') {
 
 const planHandler: JobHandler = async ({ job }) => {
   if (!discovery) throw new AppError('UNRESOLVED', 'No DiscoveryPort configured (DISCOVERY=fixture or Part 4 adapter)', true);
-  await runPlanJob({ db, muse, discovery }, job.payload as { planId: string; inputRevision: number; reason?: string });
+  await runPlanJob({ db, muse: muse(), discovery }, job.payload as { planId: string; inputRevision: number; reason?: string });
 };
 register('plan', planHandler);
 register('repair', planHandler);
-register('process_inbound', async ({ job }) => { await handleInbound({ db, muse }, job.payload as InboundJob); });
+register('poll_reminder', async ({ job }) => { await runPollReminder(db, job.payload as { planId: string; versionId: string }); });
+register('process_inbound', async ({ job }) => { await handleInbound({ db, muse: muse() }, job.payload as InboundJob); });
 
 let stopping = false;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { stopping = true; });

@@ -266,7 +266,7 @@ export interface BookingPort {
 export const JobKind = z.enum([
   'process_inbound', 'resume_connections', 'plan', 'repair', 'send_outbox', 'poll_reminder',
   'refresh_wallet', 'quote_booking', 'submit_booking', 'reconcile_booking', 'sync_calendar',
-  'create_reimbursements', 'handle_change',
+  'create_reimbursements', 'handle_change', 'publish_poll',
 ]);
 export type JobKind = z.infer<typeof JobKind>;
 

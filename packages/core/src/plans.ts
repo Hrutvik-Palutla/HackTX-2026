@@ -226,3 +226,63 @@ export async function publicPlan(db: Db, actor: ActorContext, planId: string) {
     decision: decision ? { optionId: decision.optionId, attendeeUserIds: decision.attendeeUserIds, recordedAt: decision.recordedAt.toISOString() } : null,
   };
 }
+
+/**
+ * Call after a friendship is accepted (Part 1's accept handler). Any waiting plan of this user whose organizer
+ * is now connected to every participant moves to planning and gets a plan job. Existing friends need no extra step.
+ */
+export async function resumeWaitingPlans(db: Db, userId: string) {
+  const waiting = await db.selectDistinct({ id: plans.id, organizer: plans.organizerUserId, rev: plans.inputRevision }).from(plans)
+    .leftJoin(planParticipants, eq(planParticipants.planId, plans.id))
+    .where(and(eq(plans.status, 'waiting_connections'), or(eq(plans.organizerUserId, userId), eq(planParticipants.userId, userId))));
+  const resumed: string[] = [];
+  for (const p of waiting) {
+    const parts = await db.select({ userId: planParticipants.userId }).from(planParticipants).where(eq(planParticipants.planId, p.id));
+    if (parts.some((x) => !x.userId)) continue; // invitee hasn't signed up yet
+    if ((await missingConnections(db, p.organizer, parts.map((x) => x.userId!))).length) continue;
+    await db.transaction(async (tx) => {
+      const row = await bumpRevision(tx, p.id, p.rev, { status: 'planning' });
+      await enqueue(tx, { kind: 'plan', planId: p.id, dedupeKey: `plan:${p.id}:${row.inputRevision}`, payload: { planId: p.id, inputRevision: row.inputRevision } });
+    });
+    resumed.push(p.id);
+  }
+  return resumed;
+}
+
+/** Plans visible to the user (organizer or participant), newest first. */
+export async function listPlans(db: Db, actor: ActorContext) {
+  return db.selectDistinct({ id: plans.id, request: plans.request, status: plans.status, updatedAt: plans.updatedAt }).from(plans)
+    .leftJoin(planParticipants, eq(planParticipants.planId, plans.id))
+    .where(or(eq(plans.organizerUserId, actor.userId), eq(planParticipants.userId, actor.userId)))
+    .orderBy(sql`${plans.updatedAt} desc`);
+}
+
+const BEFORE_BOOKING: PlanStatus[] = ['waiting_connections', 'planning', 'clarifying', 'voting', 'selected'];
+
+/** Organizer edits the roster before booking. New people must be accepted friends; options are re-planned. */
+export async function updateParticipants(db: Db, actor: ActorContext, input: { planId: string; add: string[]; remove: string[]; expectedRevision: number }) {
+  const plan = await assertMember(db, input.planId, actor.userId);
+  if (plan.organizerUserId !== actor.userId) throw new AppError('FORBIDDEN', 'Only the organizer can change who is invited');
+  if (!BEFORE_BOOKING.includes(plan.status as PlanStatus)) throw new AppError('UNRESOLVED', 'Roster is locked after booking starts');
+  if (input.remove.includes(plan.organizerUserId)) throw invalid('Organizer cannot be removed');
+  const missing = await missingConnections(db, plan.organizerUserId, input.add);
+  if (missing.length) throw new AppError('UNRESOLVED', 'Connect with these people first');
+  return db.transaction(async (tx) => {
+    const status = plan.status === 'waiting_connections' ? 'waiting_connections' : 'planning';
+    const row = await bumpRevision(tx, plan.id, input.expectedRevision, { status });
+    if (input.remove.length) await tx.delete(planParticipants).where(and(eq(planParticipants.planId, plan.id), inArray(planParticipants.userId, input.remove)));
+    if (input.add.length) await tx.insert(planParticipants).values(input.add.map((userId) => ({ planId: plan.id, userId }))).onConflictDoNothing();
+    await tx.update(plans).set({ selectedOptionId: null }).where(eq(plans.id, plan.id));
+    if (status === 'planning') {
+      await enqueue(tx, { kind: 'repair', planId: plan.id, dedupeKey: `repair:${plan.id}:${row.inputRevision}`, payload: { planId: plan.id, inputRevision: row.inputRevision, reason: 'the group changed' } });
+    }
+    return row;
+  });
+}
+
+/** Organizer closes an unbooked plan. */
+export async function closePlan(db: Db, actor: ActorContext, planId: string, expectedRevision: number) {
+  const plan = await assertMember(db, planId, actor.userId);
+  if (plan.organizerUserId !== actor.userId) throw new AppError('FORBIDDEN', 'Only the organizer can close the plan');
+  return setStatus(db, planId, expectedRevision, 'closed');
+}

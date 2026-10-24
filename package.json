@@ -3,14 +3,17 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.34.8",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "db:generate": "pnpm --filter @hacktx/db generate",
     "db:migrate": "pnpm --filter @hacktx/db migrate",
     "worker": "pnpm --filter @hacktx/worker start",
-    "muse:smoke": "pnpm --filter @hacktx/agent smoke"
+    "muse:smoke": "pnpm --filter @hacktx/agent smoke",
+    "agent:demo": "pnpm --filter @hacktx/agent demo"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

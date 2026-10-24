@@ -3,8 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "smoke": "tsx --env-file-if-exists=../../.env src/smoke.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "smoke": "tsx --env-file-if-exists=../../.env src/smoke.ts",
+    "demo": "tsx --env-file-if-exists=../../.env src/demo.ts"
+  },
   "dependencies": {
     "@hacktx/contracts": "workspace:*",
     "@hacktx/core": "workspace:*",
@@ -13,5 +18,8 @@
     "drizzle-orm": "0.45.4",
     "openai": "7.43.0",
     "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.11"
   }
 }

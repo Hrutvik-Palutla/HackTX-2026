@@ -5,3 +5,4 @@ export * from './availability';
 export * from './plans';
 export * from './votes';
 export * from './facts';
+export * from './polls';
