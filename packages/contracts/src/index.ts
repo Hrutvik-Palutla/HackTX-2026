@@ -241,6 +241,8 @@ export interface DiscoveryPort {
   searchMovie(input: { title: string; city: City; window: Interval }): Promise<Candidate[]>;
   searchOutings(input: { query: string; city: City; window: Interval }): Promise<Candidate[]>;
   extractPublicPage(url: string): Promise<{ source: Source; facts: unknown }>;
+  /** Source metadata for ids referenced by returned candidates (Part 4's SerpApi adapter provides this). */
+  getSource?(sourceId: Id): Source | null;
 }
 
 export type BusyResult = { busy: Interval[]; fetchedAt: Instant; status: 'ok' | 'disconnected' | 'error' };

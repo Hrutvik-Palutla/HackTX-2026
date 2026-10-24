@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { z } from 'zod';
 import { agentRuns, conversations, messagingIdentities, outbox, planConversations, plans, runSteps, voteStates } from '@hacktx/db';
-import { createPlan, postToConversation, publishVersion, savePrivateFact } from '@hacktx/core';
+import { createPlan, postToConversation, publicPlan, publishVersion, savePrivateFact } from '@hacktx/core';
 import { fixtureDiscovery, handleInbound, runPlanJob, type ChatMessage, type Muse } from '@hacktx/agent';
 import { testDb, seedUsers, befriend, austin, web } from '../../core/test/helpers';
 
@@ -128,5 +128,24 @@ describe('conversation', () => {
     } });
     expect(r.status).toBe('unknown_sender');
     expect(muse.seen).toHaveLength(0);
+  });
+});
+
+describe('sources', () => {
+  it('persists candidate sources so the public plan carries real links', async () => {
+    const { db, u, plan } = await setup();
+    const src = { id: 'src_test', url: 'https://www.google.com/search?q=dune+showtimes', title: 'Google showtimes for Dune', fetchedAt: '2026-10-30T12:00:00.000Z', provider: 'serpapi_google' as const, providerSearchId: 'abc' };
+    const discovery = {
+      ...fixtureDiscovery,
+      async searchMovie(i: Parameters<typeof fixtureDiscovery.searchMovie>[0]) {
+        return (await fixtureDiscovery.searchMovie(i)).map((c) => ({ ...c, sourceIds: [src.id] }));
+      },
+      getSource: (id: string) => (id === src.id ? src : null),
+    };
+    const muse = fakeMuse({ structured: [intent, { options: [pick('fx-m2')] }] });
+    expect((await runPlanJob({ db, muse, discovery }, { planId: plan.id, inputRevision: plan.inputRevision })).status).toBe('published');
+    const view = await publicPlan(db, web(u.Mark!), plan.id);
+    expect(view.options[0]!.sourceIds).toEqual(['src_test']);
+    expect(view.sources).toEqual([{ id: 'src_test', url: src.url, title: src.title, provider: 'serpapi_google', fetchedAt: src.fetchedAt }]);
   });
 });

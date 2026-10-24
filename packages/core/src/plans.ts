@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNull, max, or, sql } from 'drizzle-orm';
 import {
-  plans, planParticipants, planVersions, planOptions, polls, planDecisions, friendships, user, messages, planConversations,
+  plans, planParticipants, planVersions, planOptions, polls, planDecisions, friendships, user, messages, planConversations, sources,
   type Db,
 } from '@hacktx/db';
 import { PlanOption, type ActorContext, type City, type Interval, type PlanStatus } from '@hacktx/contracts';
@@ -211,6 +211,8 @@ export async function publicPlan(db: Db, actor: ActorContext, planId: string) {
   const [decision] = plan.activeVersionId
     ? await db.select().from(planDecisions).where(eq(planDecisions.versionId, plan.activeVersionId)).orderBy(sql`${planDecisions.recordedAt} desc`).limit(1)
     : [];
+  const sourceIds = [...new Set(options.flatMap((o) => o.sourceIds))];
+  const sourceRows = sourceIds.length ? await db.select().from(sources).where(inArray(sources.id, sourceIds)) : [];
   return {
     id: plan.id,
     request: plan.request,
@@ -223,6 +225,7 @@ export async function publicPlan(db: Db, actor: ActorContext, planId: string) {
     pendingInvites: invited.map((i) => i.requestedName),
     activeVersionId: plan.activeVersionId,
     options: options.sort((a, b) => a.label.localeCompare(b.label)),
+    sources: sourceRows.map((s) => ({ id: s.id, url: s.url, title: s.title, provider: s.provider, fetchedAt: s.fetchedAt.toISOString() })),
     decision: decision ? { optionId: decision.optionId, attendeeUserIds: decision.attendeeUserIds, recordedAt: decision.recordedAt.toISOString() } : null,
   };
 }

@@ -8,6 +8,20 @@
       "when": 1792878583662,
       "tag": "0000_fat_thor",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792884832942,
+      "tag": "0001_drop_unused_fulfillment_text_source_ids",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792884837069,
+      "tag": "0002_part4_fulfillment_tables",
+      "breakpoints": true
     }
   ]
 }

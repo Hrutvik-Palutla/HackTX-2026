@@ -3,7 +3,7 @@
 import { sql } from 'drizzle-orm';
 import {
   pgTable, text, uuid, timestamp, boolean, integer, jsonb, numeric,
-  primaryKey, uniqueIndex, index, check, type AnyPgColumn,
+  primaryKey, unique, uniqueIndex, index, check, type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
@@ -213,9 +213,10 @@ export const calendarEvents = pgTable('calendar_events', {
   updatedAt: updated(),
 }, (t) => [primaryKey({ columns: [t.planId, t.userId] })]);
 
-// ---------- discovery (Part 4 writes) ----------
+// ---------- discovery ----------
+// Ids come from Part 4's SerpApi adapter (stable `src_…`/`cand_…` strings), so they are text, not uuid.
 export const sources = pgTable('sources', {
-  id: pk(),
+  id: text('id').primaryKey(),
   url: text('url').notNull(),
   title: text('title').notNull(),
   provider: text('provider').notNull(),
@@ -224,7 +225,7 @@ export const sources = pgTable('sources', {
 });
 
 export const candidates = pgTable('candidates', {
-  id: pk(),
+  id: text('id').primaryKey(),
   kind: text('kind').notNull(),
   payload: jsonb('payload').notNull(), // contracts Candidate (id mirrors this row)
   cacheKey: text('cache_key').notNull(),
@@ -291,67 +292,38 @@ export const planDecisions = pgTable('plan_decisions', {
   recordedAt: created(),
 });
 
-// ---------- fulfillment (Part 4 implements) ----------
-export const bookingQuotes = pgTable('booking_quotes', {
-  id: pk(),
-  planId: uuid('plan_id').notNull().references(() => plans.id),
-  versionId: uuid('version_id').notNull().references(() => planVersions.id),
-  optionId: uuid('option_id').notNull().references(() => planOptions.id),
-  buyerUserId: userRef('buyer_user_id').notNull(),
-  bindingHash: text('binding_hash').notNull(),
-  expiresAt: ts('expires_at').notNull(),
-  mode: text('mode').notNull(),
-  payload: jsonb('payload').notNull(), // contracts BookingQuote
-  createdAt: created(),
-});
+// ---------- fulfillment (Part 4 owns; mirrors packages/fulfillment/sql/001_part4.sql exactly) ----------
+// Text ids, JSON payloads (contracts BookingQuote/BuyerAuthorization/BookingResult/Reimbursement), and deliberately no
+// foreign keys into plan/user tables. Their SQL uses IF NOT EXISTS, so either migration path can run first.
+const fulfillmentTable = (name: string) => pgTable(name, {
+  id: text('id').primaryKey(),
+  planId: text('plan_id').notNull(),
+  payload: jsonb('payload').notNull(),
+}, (t) => [index(`${name}_plan_id_idx`).on(t.planId)]);
 
-export const buyerAuthorizations = pgTable('buyer_authorizations', {
-  id: pk(),
-  quoteId: uuid('quote_id').notNull().references(() => bookingQuotes.id),
-  buyerUserId: userRef('buyer_user_id').notNull(),
-  walletRequestId: text('wallet_request_id').notNull().unique(),
-  status: text('status').notNull(),
-  approvedBindingHash: text('approved_binding_hash'),
-  mode: text('mode').notNull(),
-  checkedAt: ts('checked_at').notNull(),
-});
+export const fulfillmentQuotes = fulfillmentTable('fulfillment_quotes');
+export const fulfillmentAuthorizations = fulfillmentTable('fulfillment_authorizations');
+export const fulfillmentBookings = fulfillmentTable('fulfillment_bookings');
+export const fulfillmentPrivateDeliveries = fulfillmentTable('fulfillment_private_deliveries');
+export const fulfillmentChanges = fulfillmentTable('fulfillment_changes');
 
-export const bookings = pgTable('bookings', {
-  id: pk(),
-  planId: uuid('plan_id').notNull().references(() => plans.id),
-  versionId: uuid('version_id').notNull().references(() => planVersions.id),
-  quoteId: uuid('quote_id').references(() => bookingQuotes.id),
-  authorizationId: uuid('authorization_id').unique().references(() => buyerAuthorizations.id), // one submission per approval
-  status: text('status').notNull(),
-  merchantOrderRef: text('merchant_order_ref'),
-  confirmationUrl: text('confirmation_url'),
-  actualTotal: jsonb('actual_total'),
-  mode: text('mode').notNull(),
-  createdAt: created(),
-  updatedAt: updated(),
-});
+export const fulfillmentReimbursements = pgTable('fulfillment_reimbursements', {
+  id: text('id').primaryKey(),
+  planId: text('plan_id').notNull(),
+  bookingId: text('booking_id').notNull(),
+  payerUserId: text('payer_user_id').notNull(),
+  payload: jsonb('payload').notNull(),
+}, (t) => [
+  unique('fulfillment_reimbursements_booking_payer_unique').on(t.bookingId, t.payerUserId),
+  index('fulfillment_reimbursements_plan_id_idx').on(t.planId),
+  index('fulfillment_reimbursements_booking_id_idx').on(t.bookingId),
+]);
 
-export const walletConnections = pgTable('wallet_connections', {
-  userId: userRef('user_id').notNull(),
-  provider: text('provider').notNull(),
-  authEnc: text('auth_enc').notNull(),
-  status: text('status').notNull(),
-  updatedAt: updated(),
-}, (t) => [primaryKey({ columns: [t.userId, t.provider] })]);
-
-export const reimbursements = pgTable('reimbursements', {
-  id: pk(),
-  bookingId: uuid('booking_id').notNull().references(() => bookings.id),
-  payerUserId: userRef('payer_user_id').notNull(),
-  recipientUserId: userRef('recipient_user_id').notNull(),
-  amountMinor: integer('amount_minor').notNull(),
-  currency: text('currency').notNull().default('USD'),
-  paymentUrl: text('payment_url'),
-  status: text('status').notNull(),
-  confirmationSource: text('confirmation_source').notNull().default('none'),
-  mode: text('mode').notNull(),
-  updatedAt: updated(),
-}, (t) => [uniqueIndex().on(t.bookingId, t.payerUserId)]);
+export const fulfillmentEffects = pgTable('fulfillment_effects', {
+  effectKey: text('effect_key').primaryKey(),
+  planId: text('plan_id').notNull(),
+  payload: jsonb('payload').notNull(),
+}, (t) => [index('fulfillment_effects_plan_id_idx').on(t.planId)]);
 
 // ---------- durable work ----------
 export const inboundEvents = pgTable('inbound_events', {
@@ -401,7 +373,7 @@ export const externalEffects = pgTable('external_effects', {
   operationKey: text('operation_key').notNull().unique(),
   kind: text('kind').notNull(),
   planId: uuid('plan_id').references(() => plans.id),
-  quoteId: uuid('quote_id').references(() => bookingQuotes.id),
+  quoteId: text('quote_id'), // Part 4 quote id (text, no FK)
   state: text('state').notNull().default('reserved'), // reserved | inflight | confirmed | unknown | failed
   providerRequestId: text('provider_request_id'),
   data: jsonb('data'),

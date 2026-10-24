@@ -2,7 +2,7 @@
 // -> CAS publish -> recipient-scoped messages. The model never decides availability, price, or which venues exist.
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
-import { conversations, plans, planParticipants, planConversations, type Db } from '@hacktx/db';
+import { candidates, conversations, plans, planParticipants, planConversations, sources, type Db } from '@hacktx/db';
 import type { Candidate, City, DiscoveryPort, Interval, PlanOption } from '@hacktx/contracts';
 import {
   AppError, WEB, checkSlot, enqueue, enqueueMessage, postToConversation, tally, loadFactsForFeasibility, loadMemberAvailability, publishVersion, setStatus,
@@ -73,6 +73,7 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
         ? deps.discovery.searchMovie({ title: intent.movieTitle, city, window })
         : deps.discovery.searchOutings({ query: intent.searchQuery, city, window }),
     (r) => ({ summary: `${r.length} candidates`, sourceIds: [...new Set(r.flatMap((c) => c.sourceIds))] }));
+    await persistDiscovery(db, deps.discovery, found);
 
     // 3. Deterministic feasibility: availability, window, explicit spending limits.
     const participants = (await db.select({ userId: planParticipants.userId }).from(planParticipants).where(eq(planParticipants.planId, plan.id)))
@@ -261,4 +262,18 @@ async function planGroupConversations(db: Db, planId: string) {
   return db.select({ id: conversations.id, kind: conversations.kind, provider: conversations.provider }).from(planConversations)
     .innerJoin(conversations, eq(conversations.id, planConversations.conversationId))
     .where(and(eq(planConversations.planId, planId), eq(planConversations.audience, 'group')));
+}
+
+/** Keep candidates and their sources so options can show source links and Part 4 can quote the selected candidate. */
+async function persistDiscovery(db: Db, discovery: DiscoveryPort, found: Candidate[]) {
+  const now = new Date();
+  for (const c of found.slice(0, MAX_CANDIDATES)) {
+    await db.insert(candidates).values({ id: c.id, kind: c.kind, payload: c, cacheKey: '', fetchedAt: now, expiresAt: new Date(now.getTime() + 3_600_000) })
+      .onConflictDoUpdate({ target: candidates.id, set: { payload: c, fetchedAt: now } });
+  }
+  if (!discovery.getSource) return;
+  for (const id of new Set(found.slice(0, MAX_CANDIDATES).flatMap((c) => c.sourceIds))) {
+    const s = discovery.getSource(id);
+    if (s) await db.insert(sources).values({ ...s, fetchedAt: new Date(s.fetchedAt) }).onConflictDoNothing();
+  }
 }
