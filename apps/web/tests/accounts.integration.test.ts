@@ -310,6 +310,7 @@ test(
       assert.deepEqual(resumeUsers, {
         inviterId: jamie.actor.userId,
         recipientId: outsider.actor.userId,
+        invitationId: resumeInvite.invitationId,
       });
       for (let index = 0; index < 20; index++) {
         try {
