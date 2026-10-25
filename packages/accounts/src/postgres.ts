@@ -67,6 +67,10 @@ export function postgresAccounts(
       inviterId: string;
     },
   ) => Promise<void>,
+  onDeclined?: (
+    tx: SqlConnection,
+    invite: { invitationId: string; inviterId: string; recipientId: string },
+  ) => Promise<void>,
 ): AccountRepository {
   if (keys.encryptionKey.length !== 32 || keys.lookupKey.length < 32)
     throw Error(
@@ -215,6 +219,12 @@ export function postgresAccounts(
               recipientId: recipientUserId,
               invitationId,
             });
+        } else if (onDeclined) {
+          await onDeclined(tx, {
+            invitationId: String(result.rows[0]!.id),
+            inviterId: String(result.rows[0]!.inviter_id),
+            recipientId: recipientUserId,
+          });
         }
         return true;
       });

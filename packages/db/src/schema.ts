@@ -121,6 +121,7 @@ export const conversations = pgTable('conversations', {
   sendingLine: text('sending_line').notNull(),
   externalChatId: text('external_chat_id').notNull(),
   kind: text('kind').notNull(), // group | private
+  membershipComplete: boolean('membership_complete').notNull().default(false),
   activePlanId: uuid('active_plan_id').references((): AnyPgColumn => plans.id, { onDelete: 'set null' }),
   createdAt: created(),
 }, (t) => [uniqueIndex().on(t.provider, t.sendingLine, t.externalChatId)]);
@@ -358,6 +359,7 @@ export const jobs = pgTable('jobs', {
   id: pk(),
   kind: text('kind').notNull(),
   planId: uuid('plan_id').references(() => plans.id, { onDelete: 'cascade' }),
+  conversationId: uuid('conversation_id').references(() => conversations.id, { onDelete: 'cascade' }),
   dedupeKey: text('dedupe_key').notNull().unique(),
   payload: jsonb('payload').notNull().default({}),
   state: text('state').notNull().default('queued'), // queued | running | done | failed
@@ -370,6 +372,31 @@ export const jobs = pgTable('jobs', {
   createdAt: created(),
   updatedAt: updated(),
 }, (t) => [index().on(t.state, t.runAfter)]);
+
+// A group request that needs privately supplied contacts before a plan can exist.
+export const planningDrafts = pgTable('planning_drafts', {
+  id: pk(),
+  organizerUserId: text('organizer_user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  requestEnc: text('request_enc').notNull(),
+  planId: uuid('plan_id').references(() => plans.id, { onDelete: 'cascade' }),
+  createdAt: created(),
+  updatedAt: updated(),
+}, t => [unique().on(t.organizerUserId, t.conversationId)]);
+
+export const researchEvidence = pgTable('research_evidence', {
+  sourceId: text('source_id').primaryKey().references(() => sources.id, { onDelete: 'cascade' }),
+  payload: jsonb('payload').notNull(),
+  createdAt: created(),
+});
+
+export const workerHeartbeats = pgTable('worker_heartbeats', {
+  id: text('id').primaryKey(),
+  role: text('role').notNull(),
+  revision: text('revision').notNull(),
+  connected: boolean('connected').notNull(),
+  updatedAt: updated(),
+});
 
 export const outbox = pgTable('outbox', {
   id: pk(),

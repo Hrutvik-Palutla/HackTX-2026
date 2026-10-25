@@ -144,6 +144,16 @@ export function MuseApp({
     const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
     return () => clearTimeout(timer);
   }, [cooldown]);
+  useEffect(() => {
+    if (preview) return;
+    const here = window.location.pathname + window.location.search;
+    if (status === "signed-out")
+      window.location.replace(`/?next=${encodeURIComponent(view === "signup" ? returnTo : here)}`);
+    else if (status === "ready" && !profile?.onboardingComplete && view !== "signup")
+      window.location.replace(`/signup?next=${encodeURIComponent(here)}`);
+    else if (status === "ready" && profile?.onboardingComplete && view === "signup")
+      window.location.replace(returnTo);
+  }, [preview, status, profile?.onboardingComplete, view, returnTo]);
   const applyPlan = useCallback(
     (value: PlanView) => {
       setPlan(value);
@@ -309,7 +319,7 @@ export function MuseApp({
         body: "{}",
       });
       if (!response.ok) throw Error("Could not sign out. Try again.");
-      window.location.href = "/login";
+      window.location.href = "/";
     });
   }
   if (preview) return <PreviewApp view={view} id={id} />;
@@ -318,9 +328,9 @@ export function MuseApp({
   const title = onboarding
     ? "Finish your account"
     : ({
-        plans: "Plans",
+        plans: "Current Plans",
         friends: "Friends",
-        settings: "Account",
+        settings: "Settings",
         detail: plan?.title ?? "Plan",
         private: "Private details",
         payment: "Your share",
@@ -354,7 +364,7 @@ export function MuseApp({
             meta={session?.user.name}
             back={
               ["detail", "private", "payment"].includes(view) ? (
-                <Link href="/plans">← Plans</Link>
+                <Link href="/plans">← Current Plans</Link>
               ) : undefined
             }
           />
@@ -377,73 +387,8 @@ export function MuseApp({
                 Try an example
               </Link>
             </section>
-          ) : status === "signed-out" || (authView && status !== "ready") ? (
-            <>
-              <form className="form-panel" onSubmit={signIn}>
-                <Field label="Phone number">
-                  <input
-                    type="tel"
-                    autoComplete="tel"
-                    required
-                    pattern="\+[1-9][0-9 ()\.\-]{7,24}"
-                    placeholder="+15125550123"
-                    value={phone}
-                    disabled={sent}
-                    onChange={(e) => setPhone(e.target.value)}
-                  />
-                </Field>
-                {sent && (
-                  <Field label="Six-digit verification code">
-                    <input
-                      required
-                      pattern="[0-9]{6}"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      maxLength={6}
-                      value={code}
-                      onChange={(e) => setCode(e.target.value)}
-                    />
-                  </Field>
-                )}
-                <button disabled={busy}>
-                  {busy
-                    ? "Please wait…"
-                    : sent
-                      ? "Verify and continue"
-                      : "Send code"}
-                </button>
-                {sent && (
-                  <div className="action-row">
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={busy || cooldown > 0}
-                      onClick={() => void perform(sendCode)}
-                    >
-                      {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={busy}
-                      onClick={() => {
-                        setSent(false);
-                        setCode("");
-                      }}
-                    >
-                      Change number
-                    </button>
-                  </div>
-                )}
-              </form>
-              <p className="hint">
-                Codes expire after five minutes. Never share yours.
-              </p>
-              <p className="hint">Your phone identifies you to your friends. It isn’t needed to try the example.</p>
-              <Link className="back" href="/try">
-                Try an example without signing in →
-              </Link>
-            </>
+          ) : status === "signed-out" ? (
+            <p role="status">Taking you to sign in…</p>
           ) : onboarding || view === "settings" || authView ? (
             <>
               <p>
@@ -487,16 +432,18 @@ export function MuseApp({
                   />
                 </Field>
                 <button disabled={busy}>
-                  {busy ? "Saving…" : "Save account"}
+                  {busy ? "Saving…" : onboarding ? "Finish signup" : "Save changes"}
                 </button>
               </form>
-              {!onboarding && (
+              {(
                 <section className="panel">
-                  <h2>Calendar</h2>
+                  <h2>Calendar{onboarding ? " · optional" : ""}</h2>
                   <p>
                     {profile?.calendarConnected
                       ? "Calendar connected."
-                      : "No calendar connection reported."}{" "}
+                      : onboarding
+                        ? "Connect Google Calendar so SideQuest can find times you’re free. You can skip this and add it later in Settings."
+                        : "No calendar connection reported."}{" "}
                     Event titles stay private.
                   </p>
                   <Link className="back" href="/api/calendar/connect">
@@ -846,9 +793,9 @@ export function MuseApp({
                                 {o.label}. {o.title}
                               </label>
                               <p>
-                                {new Date(o.startAt).toLocaleString("en-US", {
+                                {o.startAt ? new Date(o.startAt).toLocaleString("en-US", {
                                   timeZone: o.timeZone,
-                                })}{" "}
+                                }) : "Time unknown — check showtimes"}{" "}
                                 ({o.timeZone}) · {money(o.estimatedPerPerson)} ·{" "}
                                 {o.priceKind}
                               </p>

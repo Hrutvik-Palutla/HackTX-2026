@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, max, or, sql } from 'drizzle-orm';
 import {
   plans, planParticipants, planVersions, planOptions, polls, planDecisions, friendships, user, messages, planConversations, sources,
-  votes, voteStates,
+  votes, voteStates, fulfillmentBookings,
   type Db,
 } from '@hacktx/db';
 import { City as CityS, PlanOption, type ActorContext, type City, type Interval, type PlanStatus } from '@hacktx/contracts';
@@ -76,7 +76,7 @@ export async function createPlan(
     }).returning();
     await tx.insert(planParticipants).values([actor.userId, ...participants].map((userId) => ({ planId: plan!.id, userId })));
     if (!missing.length) {
-      await enqueue(tx, { kind: 'plan', planId: plan!.id, dedupeKey: `plan:${plan!.id}:0`, payload: { planId: plan!.id, inputRevision: 0 } });
+      await enqueue(tx, { kind: 'plan', planId: plan!.id, conversationId: actor.conversationId ?? null, dedupeKey: `plan:${plan!.id}:0`, payload: { planId: plan!.id, inputRevision: 0 } });
     }
     return { plan: plan!, missingConnections: missing };
   });
@@ -96,15 +96,32 @@ export async function bumpRevision(db: Db, planId: string, expectedRevision: num
  * A material change: new revision, plan back to `planning`, fresh repair job. Old version/poll become stale
  * because publishVersion supersedes them and votes require the active version.
  */
-export async function requestRepair(db: Db, planId: string, expectedRevision: number, reason: string, change?: { request?: string; templateId?: 'movie-night' | 'local-outing' }) {
+export async function requestRepair(db: Db, planId: string, expectedRevision: number, reason: string, change?: { request?: string; templateId?: 'movie-night' | 'local-outing'; window?: Interval }) {
+  if (change?.window) {
+    const start = new Date(change.window.startAt);
+    const end = new Date(change.window.endAt);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) throw invalid('A valid planning window with end after start is required');
+  }
   return db.transaction(async (tx) => {
     const [cur] = await tx.select().from(plans).where(eq(plans.id, planId));
     if (!cur) throw notFound();
-    if (!['planning', 'clarifying', 'voting', 'selected'].includes(cur.status)) {
+    if (!['planning', 'clarifying', 'voting', 'selected', 'needs_handoff'].includes(cur.status)) {
       throw new AppError('UNRESOLVED', `Plan in ${cur.status} cannot be repaired automatically`);
     }
-    const row = await bumpRevision(tx, planId, expectedRevision, { status: 'planning' });
-    await tx.update(plans).set({ selectedOptionId: null, ...change, updatedAt: new Date() }).where(eq(plans.id, planId));
+    const purchases = await tx.select({ payload: fulfillmentBookings.payload }).from(fulfillmentBookings).where(eq(fulfillmentBookings.planId, planId));
+    if (cur.status === 'needs_handoff' && !purchases.some(row => (row.payload as { status?: string }).status === 'failed')) {
+      throw new AppError('UNRESOLVED', 'The buyer must confirm the handoff was not purchased before changing the plan.');
+    }
+    if (purchases.some(row => ['handoff_required', 'submitting', 'outcome_unknown', 'merchant_confirmed', 'test_confirmed', 'buyer_reported'].includes((row.payload as { status?: string }).status ?? ''))) {
+      throw new AppError('UNRESOLVED', 'The buyer must resolve the existing checkout before the plan can change.');
+    }
+    const [row] = await tx.update(plans).set({
+      status: 'planning', selectedOptionId: null, request: change?.request ?? cur.request,
+      templateId: change?.templateId ?? cur.templateId,
+      ...(change?.window ? { windowStart: new Date(change.window.startAt), windowEnd: new Date(change.window.endAt) } : {}),
+      inputRevision: sql`${plans.inputRevision} + 1`, updatedAt: new Date(),
+    }).where(and(eq(plans.id, planId), eq(plans.inputRevision, expectedRevision))).returning();
+    if (!row) throw stale();
     await enqueue(tx, { kind: 'repair', planId, dedupeKey: `repair:${planId}:${row.inputRevision}`, payload: { planId, inputRevision: row.inputRevision, reason } });
     const [updated] = await tx.select().from(plans).where(eq(plans.id, planId));
     return updated!;
@@ -174,6 +191,8 @@ export async function recordDecision(
     assertTransition(plan.status as PlanStatus, 'selected');
     const [opt] = await tx.select().from(planOptions).where(and(eq(planOptions.id, input.optionId), eq(planOptions.versionId, input.versionId)));
     if (!opt) throw invalid('Option is not in this version');
+    const option = PlanOption.parse(opt.payload);
+    if (!option.startAt || !option.endAt) throw invalid('Pick a theater and clarify a real showtime before selecting or booking this option.');
 
     const parts = await tx.select({ userId: planParticipants.userId }).from(planParticipants).where(eq(planParticipants.planId, plan.id));
     const members = new Set(parts.map((p) => p.userId).filter(Boolean) as string[]);
@@ -273,7 +292,7 @@ export async function listPlans(db: Db, actor: ActorContext) {
 const BEFORE_BOOKING: PlanStatus[] = ['waiting_connections', 'planning', 'clarifying', 'voting', 'selected'];
 
 /** Organizer edits the roster before booking. New people must be accepted friends; options are re-planned. */
-export async function updateParticipants(db: Db, actor: ActorContext, input: { planId: string; add: string[]; remove: string[]; expectedRevision: number }) {
+export async function updateParticipants(db: Db, actor: ActorContext, input: { planId: string; add: string[]; remove: string[]; removeInviteIds?: string[]; expectedRevision: number }) {
   const plan = await assertMember(db, input.planId, actor.userId);
   if (plan.organizerUserId !== actor.userId) throw new AppError('FORBIDDEN', 'Only the organizer can change who is invited');
   if (!BEFORE_BOOKING.includes(plan.status as PlanStatus)) throw new AppError('UNRESOLVED', 'Roster is locked after booking starts');
@@ -284,10 +303,15 @@ export async function updateParticipants(db: Db, actor: ActorContext, input: { p
     const status = plan.status === 'waiting_connections' ? 'waiting_connections' : 'planning';
     const row = await bumpRevision(tx, plan.id, input.expectedRevision, { status });
     if (input.remove.length) await tx.delete(planParticipants).where(and(eq(planParticipants.planId, plan.id), inArray(planParticipants.userId, input.remove)));
+    if (input.removeInviteIds?.length) await tx.delete(planParticipants).where(and(eq(planParticipants.planId, plan.id), inArray(planParticipants.inviteId, input.removeInviteIds), isNull(planParticipants.userId)));
     if (input.add.length) await tx.insert(planParticipants).values(input.add.map((userId) => ({ planId: plan.id, userId }))).onConflictDoNothing();
     await tx.update(plans).set({ selectedOptionId: null }).where(eq(plans.id, plan.id));
     if (status === 'planning') {
       await enqueue(tx, { kind: 'repair', planId: plan.id, dedupeKey: `repair:${plan.id}:${row.inputRevision}`, payload: { planId: plan.id, inputRevision: row.inputRevision, reason: 'the group changed' } });
+    }
+    if (status === 'waiting_connections') {
+      const resumed = await resumeWaitingPlans(tx, plan.organizerUserId);
+      if (resumed.includes(plan.id)) return (await tx.select().from(plans).where(eq(plans.id, plan.id)))[0]!;
     }
     return row;
   });

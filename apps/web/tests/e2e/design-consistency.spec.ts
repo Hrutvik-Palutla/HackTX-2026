@@ -2,8 +2,8 @@ import { test, expect } from '@playwright/test';
 
 test('home offers a public example before asking for a phone', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Make plans. Keep the group chat.');
-  await page.getByRole('link', { name: 'Try an example', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Plans with friends, handled.');
+  await page.getByRole('link', { name: 'See an example first', exact: true }).click();
   await expect(page).toHaveURL(/\/try$/);
   await expect(page.getByLabel('Phone number')).toHaveCount(0);
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();

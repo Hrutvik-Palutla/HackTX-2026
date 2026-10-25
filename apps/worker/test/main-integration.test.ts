@@ -95,3 +95,21 @@ it('calendar jobs exclude a member who is not among the selected attendees', asy
   expect(writes).toEqual([]);
   expect((await t.db.select().from(calendarEvents)).map(event => event.userId).sort()).toEqual([t.u.Alex, t.u.Mark].sort());
 });
+
+it('organizer can remove a declined invitee or close a waiting plan through chat tools', async () => {
+  const db = await testDb();
+  const users = await seedUsers(db, ['Alex', 'Mark']);
+  const { inviteByPhone } = await import('@hacktx/core');
+  const { plan } = await createPlan(db, web(users.Alex!), { request: 'A movie', templateId: 'movie-night', city: austin, window: null, participantUserIds: [] });
+  await inviteByPhone(db, web(users.Alex!), { name: 'Sam', phone: '+15125550109', planId: plan.id });
+  const [conv] = await db.insert(conversations).values({ provider: 'web', sendingLine: 'web', externalChatId: 'recovery', kind: 'private', activePlanId: plan.id }).returning();
+  const context = (userId: string): ToolCtx => ({ db, actor: web(userId), planId: plan.id, conversation: { id: conv!.id, kind: 'private' }, messageId: 'owned-recovery', providerMessageId: 'owned-recovery' });
+  // Organizer-only enforcement is preserved even for a member of the plan.
+  await db.insert(planParticipants).values({ planId: plan.id, userId: users.Mark! });
+  await expect(callTool(context(users.Mark!), 'remove_participant', { participantName: 'Sam' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  await expect(callTool(context(users.Mark!), 'close_plan', {})).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  await db.delete(planParticipants).where(eq(planParticipants.userId, users.Mark!));
+  expect(await callTool(context(users.Alex!), 'remove_participant', { participantName: 'Sam' })).toMatchObject({ removed: true, status: 'planning' });
+  expect(await callTool(context(users.Alex!), 'close_plan', {})).toMatchObject({ closed: true });
+  expect((await db.select().from(plans))[0]!.status).toBe('closed');
+});

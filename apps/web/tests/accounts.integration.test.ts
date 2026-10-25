@@ -1,7 +1,8 @@
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { Pool } from "pg";
-import { readFileSync } from "node:fs";
+import { getMigrations } from "better-auth/db/migration";
 import { createDecipheriv, randomUUID } from "node:crypto";
 import { createAccountAuth } from "../lib/auth/config";
 import {
@@ -115,6 +116,7 @@ test(
         const sql = readFileSync(new URL(`${entry.tag}.sql`, migrations), "utf8");
         await pool.query(sql.replaceAll('"public".', `"${schema}".`));
       }
+      await (await getMigrations(auth.options)).runMigrations();
       const jordan = await signup("+15125550101"),
         jamie = await signup("+15125550102"),
         outsider = await signup("+15125550103");

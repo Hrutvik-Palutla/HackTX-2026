@@ -88,19 +88,19 @@ test("OTP signup completes onboarding and persists profile through navigation", 
       };
     await route.fulfill({ json: { data: profile } });
   });
-  await page.goto("/signup?next=/settings");
-  await page.getByLabel("Phone number").fill("+15125550101");
-  await page.getByRole("button", { name: "Send code", exact: true }).click();
-  await page.getByLabel("Six-digit verification code").fill("123456");
-  await page.getByRole("button", { name: "Verify and continue" }).click();
+  await page.goto("/?next=/settings");
+  await page.getByLabel("Mobile number").fill("(512) 555-0101");
+  await page.getByRole("button", { name: "Continue with phone", exact: true }).click();
+  await page.getByLabel("Code sent to +15125550101").fill("123456");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Finish your account" }),
   ).toBeVisible();
   await page.getByLabel("Name", { exact: true }).fill("Jordan Davis");
   await page.getByLabel("Interests (comma separated)").fill("Movies, Music");
-  await page.getByRole("button", { name: "Save account" }).click();
+  await page.getByRole("button", { name: "Finish signup" }).click();
   await expect(
-    page.getByRole("heading", { name: "Account", exact: true }),
+    page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("Name", { exact: true })).toHaveValue(
@@ -444,4 +444,16 @@ test("Studio uses canonical templates and shows only the redacted execution reco
     0,
   );
   await noOverflow(page);
+});
+
+test('movie theater suggestions display unknown time without inventing a date', async ({ page }) => {
+  await page.route('**/api/auth/get-session', route => route.fulfill({ json: { user: { id: 'own', name: 'Jordan' }, session: { id: 's' } } }));
+  await page.route('**/api/me', route => route.fulfill({ json: { data: initialProfile } }));
+  await page.route('**/api/plans/friday', route => route.fulfill({ json: { data: { ...basePlan,
+    options: basePlan.options.map(option => ({ ...option, startAt: null, endAt: null, fit: 'needs_clarification', uncertainties: ['Check showtimes on the theater website'] })),
+  } } }));
+  await page.route('**/api/plans/friday/messages', route => route.fulfill({ json: { data: [] } }));
+  await page.goto('/plans/friday');
+  await expect(page.getByText('Time unknown — check showtimes', { exact: false })).toBeVisible();
+  await expect(page.getByText(/1969|1970/)).toHaveCount(0);
 });

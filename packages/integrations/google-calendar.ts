@@ -153,6 +153,7 @@ export async function outingEvent(db: Db, planId: string): Promise<{ event: Outi
   const [opt] = await db.select().from(planOptions).where(eq(planOptions.id, plan.selectedOptionId));
   if (!opt) return null;
   const o = opt.payload as PlanOption;
+  if (!o.startAt || !o.endAt) return null; // A theater suggestion is not a scheduled screening.
   const [cand] = o.candidateIds[0] ? await db.select().from(candidates).where(eq(candidates.id, o.candidateIds[0])) : [];
   const address = (cand?.payload as { address?: string | null; venueName?: string } | undefined);
   const status = plan.mode === 'test' ? 'TEST plan: nothing has been booked.'

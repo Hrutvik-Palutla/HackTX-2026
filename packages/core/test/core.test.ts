@@ -114,6 +114,20 @@ describe('plan lifecycle', () => {
     expect(stored).toMatchObject({ request: 'Watch Dune this weekend in Austin', templateId: 'movie-night' });
   });
 
+  it('updates the planning window atomically and rejects stale or invalid window changes', async () => {
+    const { db, plan } = await votingPlan();
+    const startAt = '2026-11-07T00:00:00.000Z';
+    const endAt = '2026-11-15T00:00:00.000Z';
+    const repaired = await requestRepair(db, plan.id, 0, 'new dates', {
+      request: 'See Tron or Clayface in Austin next week', window: { startAt, endAt },
+    });
+    expect(repaired).toMatchObject({ request: 'See Tron or Clayface in Austin next week', windowStart: new Date(startAt), windowEnd: new Date(endAt), inputRevision: 1 });
+    expect(await code(requestRepair(db, plan.id, 0, 'stale', { window: { startAt, endAt } }))).toBe('STALE_PLAN');
+    expect(await code(requestRepair(db, plan.id, 1, 'invalid', { window: { startAt: endAt, endAt: startAt } }))).toBe('INVALID');
+    const unchanged = await requestRepair(db, plan.id, 1, 'same dates');
+    expect(unchanged).toMatchObject({ windowStart: new Date(startAt), windowEnd: new Date(endAt), inputRevision: 2 });
+  });
+
   it('records own votes, rejects stale-version votes, reports ties', async () => {
     const { db, u, plan, version, options } = await votingPlan();
     const [A, B] = options;

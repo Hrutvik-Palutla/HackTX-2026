@@ -6,7 +6,7 @@ export function SideQuestLogo() {
       role="img"
       aria-label="SideQuest"
     >
-      <image href="/brand/sidequest-wordmark-color.png" width="1774" height="887" />
+      <image href="/brand/sidequest-wordmark-ink.png" width="1774" height="887" />
     </svg>
   );
 }
@@ -14,7 +14,7 @@ export function SideQuestLogo() {
 export function SideQuestMark() {
   return (
     <svg className="brand-symbol" viewBox="200 280 890 790" aria-hidden="true">
-      <image href="/brand/sidequest-mark-color.png" width="1254" height="1254" />
+      <image href="/brand/sidequest-mark-ink.png" width="1254" height="1254" />
     </svg>
   );
 }

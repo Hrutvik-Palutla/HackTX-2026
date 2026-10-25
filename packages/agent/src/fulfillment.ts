@@ -42,6 +42,7 @@ export interface FulfillmentPort {
   refreshAuthorization(actor: ActorContext, authorizationId: string): Promise<FulfillmentAuthorization>;
   book(actor: ActorContext, quoteId: string, authorizationId: string, expectedRevision: number, buyerPayPalMe?: string | null): Promise<FulfillmentBooking>;
   handoff(actor: ActorContext, planId: string, expectedRevision: number): Promise<{ booking: FulfillmentBooking; handoffUrl: string | null }>;
+  resolveUnpurchasedHandoff(actor: ActorContext, bookingId: string): Promise<FulfillmentBooking>;
   reportCompleted(actor: ActorContext, bookingId: string, input: { total: Money; orderReference: string; expectedRevision: number; buyerPayPalMe?: string | null }): Promise<FulfillmentBooking>;
   reconcileBooking(actor: ActorContext, bookingId: string): Promise<FulfillmentBooking>;
   requestChange(actor: ActorContext, planId: string, text: string, expectedRevision: number): Promise<{ id: string; status: 'buyer_handoff' }>;
@@ -113,7 +114,7 @@ export async function loadSelectedPlan(db: Db, actor: ActorContext, planId: stri
     planId, revision: sel.plan.inputRevision, versionId: sel.versionId, optionId: sel.optionId, title: sel.option.title,
     memberUserIds, attendeeUserIds: sel.attendeeUserIds, buyerUserId: sel.buyerUserId,
     mode: sel.plan.mode === 'live' ? 'live' : 'test', candidate: sel.candidate,
-    selectionReady: Boolean(sel.candidate && !['waiting_connections', 'planning', 'clarifying', 'voting', 'closed'].includes(sel.plan.status)),
+    selectionReady: Boolean(sel.candidate && sel.option.startAt && sel.option.endAt && !['waiting_connections', 'planning', 'clarifying', 'voting', 'closed'].includes(sel.plan.status)),
     ...(Object.keys(limits).length ? { privateMaximumShares: limits } : {}),
   };
 }
@@ -215,7 +216,7 @@ export async function afterBooking(db: Db, svc: FulfillmentPort, actor: ActorCon
   const sel = await readSelection(db, b.planId);
   const title = sel.ok ? sel.option.title : 'the outing';
   const tz = sel.ok ? sel.plan.timeZone : 'UTC';
-  const when = sel.ok ? ` on ${localTime(sel.option.startAt, tz)}` : '';
+  const when = sel.ok && sel.option.startAt ? ` on ${localTime(sel.option.startAt, tz)}` : '';
   const buyerId = sel.ok ? sel.buyerUserId ?? actor.userId : actor.userId;
   const buyer = await nameOf(db, buyerId);
   const key = `booking:${b.id}:${b.status}`;
@@ -265,6 +266,13 @@ export async function sendHandoff(db: Db, planId: string, buyerId: string, title
     ? `Checkout handoff for ${title}: buy the agreed tickets here: ${url} . SideQuest has not bought anything. When you're done, tell me the total charged and the order/confirmation number so I can send everyone their share.`
     : `Checkout handoff for ${title}: there's no checkout link on file, so buy the agreed tickets at the venue. When you're done, tell me the total charged and the order/confirmation number.`;
   await enqueueMessage(db, { recipient: { kind: 'private', userId: buyerId }, text, effectKey: `p4:handoff:${planId}:${selection.ok ? selection.versionId : 'unselected'}:${buyerId}`, planId });
+}
+
+/** Persist the explicit buyer resolution in Part 4 before reopening the plan for a new decision. */
+export async function cancelHandoff(db: Db, svc: FulfillmentPort, actor: ActorContext, planId: string, bookingId: string) {
+  const booking = await svc.resolveUnpurchasedHandoff(actor, bookingId);
+  await moveStatus(db, planId, 'selected');
+  return booking;
 }
 
 // ---------- job handlers ----------

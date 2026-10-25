@@ -22,7 +22,7 @@ export type Source = {
   url: string;
   title: string;
   fetchedAt: Instant;
-  provider: 'serpapi_google' | 'serpapi_maps' | 'serpapi_events' | 'serpapi_extract' | 'merchant';
+  provider: string;
   providerSearchId: string | null;
 };
 export type Evidence = {

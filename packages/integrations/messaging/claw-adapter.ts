@@ -9,7 +9,7 @@ import {
   conversationMembers, conversations, friendInvites, inboundEvents, messages, messagingIdentities, outbox, planConversations, planParticipants,
   plans, user, externalEffects, type Db,
 } from '@hacktx/db';
-import { AGENT_HANDLE, AppError, configurePlanGroupCreator, enqueue, open, postToConversation, reserveEffect, seal, type Job } from '@hacktx/core';
+import { AGENT_HANDLE, AppError, configurePlanGroupCreator, enqueue, open, postToConversation, reserveEffect, seal, linkVerifiedPhones, type Job } from '@hacktx/core';
 import { OutboundRecipient, type InboundMessage, type MessagingPort } from '@hacktx/contracts';
 import { ClawMessengerClient, type ClawInboundMessage, type SendTarget } from './claw-messenger.ts';
 import { maybeGreetStranger } from './stranger.ts';
@@ -56,7 +56,10 @@ export async function ingestClawMessage(db: Db, sendingLine: string, m: ClawInbo
     if (!rows[0]) return false;
     const joinedGroup = m.isGroup ? await onGroupMessage(tx as unknown as Db, sendingLine, m) : false;
     if (!m.isGroup) await maybeGreetStranger(tx as unknown as Db, sendingLine, m);
-    await enqueue(tx as unknown as Db, { kind: 'process_inbound', dedupeKey: `${CLAW_PROVIDER}:${m.messageId}`, payload: { encryptedInbound: seal('inbound', JSON.stringify({ sendingLine, message, joinedGroup, replayed: Boolean(m.replay) })) } });
+    await tx.insert(conversations).values({ provider: CLAW_PROVIDER, sendingLine, externalChatId: m.chatId, kind: m.isGroup ? 'group' : 'private' }).onConflictDoNothing();
+    const [conversation] = await tx.select({ id: conversations.id, activePlanId: conversations.activePlanId }).from(conversations).where(and(
+      eq(conversations.provider, CLAW_PROVIDER), eq(conversations.sendingLine, sendingLine), eq(conversations.externalChatId, m.chatId)));
+    await enqueue(tx as unknown as Db, { kind: 'process_inbound', planId: conversation!.activePlanId, conversationId: conversation!.id, dedupeKey: `${CLAW_PROVIDER}:${m.messageId}`, payload: { encryptedInbound: seal('inbound', JSON.stringify({ sendingLine, message, joinedGroup, replayed: Boolean(m.replay) })) } });
     return true;
   });
 }
@@ -80,6 +83,8 @@ async function onGroupMessage(db: Db, sendingLine: string, m: ClawInboundMessage
 }
 
 async function syncMembers(db: Db, conversationId: string, handles: string[], complete = true) {
+  await db.update(conversations).set({ membershipComplete: complete }).where(eq(conversations.id, conversationId));
+  await linkVerifiedPhones(db, CLAW_PROVIDER, handles); // members with verified accounts get named, even before they speak
   const current = await db.select().from(conversationMembers).where(eq(conversationMembers.conversationId, conversationId));
   const idents = handles.length ? await db.select().from(messagingIdentities)
     .where(and(eq(messagingIdentities.provider, CLAW_PROVIDER), inArray(messagingIdentities.handle, handles))) : [];
@@ -233,10 +238,16 @@ export function createPublishPollHandler(): Handler {
 export async function startClawMessenger(opts: { db: Db; env?: NodeJS.ProcessEnv; log?: (m: string) => void }) {
   const env = opts.env ?? process.env;
   const apiKey = env.CLAW_MESSENGER_API_KEY;
+  const log = opts.log ?? ((m: string) => console.log(m));
+  // Claw allows several WebSocket consumers per account. Never let a local worker that
+  // happens to have production credentials compete with the designated hosted listener.
+  if (env.CLAW_LISTENER_ENABLED !== 'true') {
+    if (apiKey) log('[claw] listener disabled; set CLAW_LISTENER_ENABLED=true only for the designated listener');
+    return null;
+  }
   // Claw chooses the provider's sender. This is a local routing namespace, not an outbound `from` field.
   const sendingLine = env.CLAW_MESSENGER_FROM_PHONE || 'claw-default';
   if (!apiKey) return null;
-  const log = opts.log ?? ((m: string) => console.log(m));
 
   // Replay anything received while we were offline; ingestion dedupes by message ID.
   const [last] = await opts.db.select({ at: max(inboundEvents.receivedAt) }).from(inboundEvents).where(eq(inboundEvents.provider, CLAW_PROVIDER));

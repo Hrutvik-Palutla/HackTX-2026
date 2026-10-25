@@ -1,0 +1,5 @@
+# Deploy: npx wrangler@4.20.0 deploy --config infra/muse-relay/wrangler.toml --var RELAY_TOKEN:<random token>
+name = "sidequest-muse-relay"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+workers_dev = true

@@ -183,7 +183,11 @@ quote_booking        request_buyer_approval check_fulfillment
 
 Messaging, exact vote writes, booking submission, calendar writes, and reimbursement creation are core commands with typed arguments and permission checks. They may be requested through tools, but only code can authorize/execute them. The fulfillment worker uses its narrow booking port; the conversational model receives no arbitrary shell tool.
 
-Per run: at most 8 model turns, 20 tool calls, 8 SerpApi requests, and roughly 20,000 input + 3,000 output tokens as a target; enforce measured usage across the whole run. Cap discovery parallelism at three. A normal message has a 60-second worker deadline; a purchase waits in durable states and resumes on separate jobs. A booking session has a 10-minute limit. On cap/timeout, send a useful status or question and persist progress.
+The research tool lets the model choose any SerpApi engine and its public parameters, refine queries, read extracted pages, or render public pages with hosted Chromium. Rendered pages expose public links and structured data, with a few safe labeled click/select actions for schedules. Search results and page text remain untrusted evidence; every proposed fact must trace to a stored source. The browser has no shell, login, form submission, checkout, or purchase action.
+
+Plans, revisions, messages, votes, research sources, and outcomes are durable in Postgres. DMs receive a short history of the sender's own plans. Group chats receive prior plan summaries only when the participant roster matches exactly, plus overlapping signup interests without identifying who supplied them. User-specific availability, spending limits, and preferences stay encrypted and scoped to their owner/plan; the planner computes aggregate fit without sending those details to the research tool. Relative-date changes update the request and UTC bounds together under the plan revision.
+
+Per run: up to 52 model turns, 100 tool calls, and 80 SerpApi searches; an individual research task stops after 48 reasoning turns and 96 search/page operations. Each job gets a separate provider request allowance (default 120), bounded by its configuration and account quota. Track model spend across runs and stop at the configured budget. A purchase waits in durable states and resumes on separate jobs. On cap/timeout, keep any grounded results, state what remains unknown, and persist progress.
 
 ### Privacy by construction
 
@@ -213,13 +217,14 @@ SerpApi is the live information layer. Muse decides what to search and how to ex
 |---|---|---|
 | Specific movie | `engine=google`, movie + city + requested date; inspect `showtimes` and organic results | Theater, date, screening time/format, address, source URL |
 | Broad outing | `engine=google_maps` and/or `engine=google_events` | Real places/events, hours or event timing where supplied, URLs, price signals |
-| Source detail | `engine=extract`, `url`, `mode=scrape` | Official-page runtime, price text, booking links, and restrictions if actually present |
+| Agent-directed research | Any supported `engine`, its public parameters, and follow-up searches/reads | Raw structured response plus normalized source text and fetched timestamp |
+| Source detail | `engine=extract`, `url`, `mode=scrape`, or hosted read-only Chromium | Public-page text, links, rendered schedules, structured data, and fetched timestamp |
 
 The documented showtimes field is conditional on Google's result. Its theater link can be a Google search URL; it is not necessarily a merchant checkout URL. Neither its existence nor an Events/Maps result establishes ticket inventory, seats, or final pricing. [Showtimes](https://serpapi.com/showtimes-results), [Maps](https://serpapi.com/google-maps-api), [Events](https://serpapi.com/google-events-api), [Extract](https://serpapi.com/extract-api).
 
 Normalize all results into the contract in `CONTRACTS.md`, including provenance per important field. Validate date/year and local time rather than parsing “Today” with the server's time zone. When Google returns the wrong movie or day, refine the query once, then explain the missing information. Never use the documentation's old example showtimes as live data.
 
-Cache keys include engine, normalized query, city/location, requested date, language, and extraction URL. Use roughly 5 minutes for showtimes/events, 1 hour for place discovery, and 10 minutes for static extracted details. Recheck the actual merchant quote and seats immediately before authorization/purchase. Reuse candidates during a budget/time repair when possible instead of searching from scratch. Store fetched timestamps and source URLs; never log query-string API keys.
+Cache keys include engine, normalized query, city/location, requested date, language, and extraction URL. Use roughly 5 minutes for showtimes/events, 1 hour for place discovery, and 10 minutes for static extracted details. Recheck the actual merchant quote and seats immediately before authorization/purchase. Reuse candidates during a budget/time repair when possible instead of searching from scratch. Store fetched timestamps and source URLs; never log query-string API keys. Limits apply per durable job rather than across the worker's lifetime.
 
 Generate up to 15 candidates, filter known conflicts in code, then select three useful alternatives with Muse. Options reference real candidate IDs. Price tiers are grounded in quoted/sourced prices; otherwise say price unknown or use a sourced format distinction without inventing a price. If a private maximum is supplied and costs are unknown, mark price fit unverified and resolve it at quote time. The model cannot invent a venue, booking URL, runtime, or cost to satisfy the requested option count.
 
@@ -306,7 +311,7 @@ Tiger advertises a 30-day trial and hourly billing. Vultr confirms MLH cloud cre
 
 The current GitHub Student Pack lists $100 Azure credit, Clerk Pro, Appwrite Education, and $25 Stripe credits toward product fees. Azure is the backup host if already activated; we do not add Clerk/Appwrite on top of the chosen stack. Stripe fee credit is not cash for tickets or confirmation of wallet eligibility. Do not budget unverified historical Twilio/DigitalOcean Pack offers, or pool four personal education credits as one balance. Student approval timing is not a dependency for the overnight build. [Current Pack](https://education.github.com/pack).
 
-Persist usage per run/provider, with reserved estimated cost before expensive work and actual cost afterward. Allow up to 200 SerpApi requests for the initial build/demo only if the account's real remaining quota covers it; otherwise lower the cap. Stop new paid work at configured cash envelopes and leave existing results usable. Record trial expiration and resource teardown owners in the implementation checklist.
+Persist usage per run/provider, with reserved estimated cost before expensive work and actual cost afterward. The initial per-job cap is 120 SerpApi requests; use the provider's reported remaining quota and the Muse spend ceiling to stop work before account credits or cash envelopes are exceeded. Record trial expiration and resource teardown owners in the implementation checklist.
 
 ## 16. Reliability, validation, and release criteria
 

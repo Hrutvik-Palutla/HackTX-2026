@@ -6,8 +6,8 @@ export type Option = {
   versionId: string;
   label: "A" | "B" | "C";
   title: string;
-  startAt: string;
-  endAt: string;
+  startAt: string | null;
+  endAt: string | null;
   timeZone: string;
   estimatedPerPerson: Money | null;
   priceKind: "quoted" | "listed" | "estimated" | "unknown";

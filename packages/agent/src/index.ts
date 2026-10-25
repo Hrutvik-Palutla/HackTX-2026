@@ -1,6 +1,7 @@
 export * from './muse';
 export * from './recorder';
 export * from './planner';
+export * from './research';
 export * from './tools';
 export * from './discuss';
 export { fixtureDiscovery } from './fixtures';

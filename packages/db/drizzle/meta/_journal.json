@@ -12,8 +12,15 @@
     {
       "idx": 1,
       "version": "7",
-      "when": 1792912656845,
-      "tag": "0001_simple_shooting_star",
+      "when": 1792925042284,
+      "tag": "0001_workflow_reliability",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792926887209,
+      "tag": "0002_plan_chat_messages",
       "breakpoints": true
     }
   ]

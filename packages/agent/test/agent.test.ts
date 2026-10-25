@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { z } from 'zod';
-import { agentRuns, conversations, jobs, messagingIdentities, outbox, planConversations, plans, runSteps, voteStates } from '@hacktx/db';
+import { agentRuns, conversations, jobs, messagingIdentities, outbox, planConversations, plans, runSteps, sources, user, voteStates } from '@hacktx/db';
 import { createPlan, postToConversation, publicPlan, publishVersion, savePrivateFact } from '@hacktx/core';
 import { GROUP_INTRO } from '@hacktx/agent';
 import { fixtureDiscovery, handleInbound, runPlanJob, type ChatMessage, type Muse } from '@hacktx/agent';
@@ -50,6 +50,160 @@ const intent = { kind: 'movie', movieTitle: 'Dune', searchQuery: 'Dune showtimes
 const pick = (candidateId: string) => ({ candidateId, startAt: null, publicExplanation: `why ${candidateId}` });
 
 describe('planner', () => {
+  it('extracts a source-backed dated movie time when structured showtimes are absent', async () => {
+    const { db, plan } = await setup();
+    const searchedAt = '2026-10-30T12:00:00.000Z';
+    const base = 'src_movie_google';
+    const sources = [
+      { id: base, url: 'https://www.google.com/search?q=dune', title: 'Google showtimes for Dune', fetchedAt: searchedAt, provider: 'serpapi_google' as const, providerSearchId: 's1' },
+      ...[1, 2, 3].map(n => ({ id: `src_org_${n}`, url: `https://cinema${n}.example.org/showtimes`, title: `Dune showtimes at Cinema ${n}`, fetchedAt: searchedAt, provider: 'serpapi_google' as const, providerSearchId: 's1' })),
+    ];
+    let extracted = 0;
+    const discovery = {
+      ...fixtureDiscovery,
+      async searchMovie() { return []; },
+      async searchMovieEvidence() { return { candidates: [], sources }; },
+      async extractPublicPage(url: string) {
+        extracted++;
+        return {
+          source: { ...sources[1]!, id: `src_extract_${extracted}`, url, title: 'Cinema showtime page', provider: 'serpapi_extract' as const },
+          facts: { text_content: { markdown: '# Dune\nDune — November 1, 2026, 7:15 PM' } },
+        };
+      },
+      getSource(id: string) { return sources.find(s => s.id === id) ?? null; },
+    };
+    const muse = fakeMuse({ structured: [intent, { options: [] }] });
+    const result = await runPlanJob({ db, muse, discovery }, { planId: plan.id, inputRevision: plan.inputRevision });
+    expect(result.status).toBe('published');
+    if (result.status !== 'published') return;
+    expect(extracted).toBe(3);
+    expect(result.options[0]).toMatchObject({ startAt: '2026-11-02T01:15:00.000Z', fit: 'needs_clarification', sourceIds: ['src_extract_1'] });
+    expect((await db.select().from(outbox))[0]!.body).toContain('Cinema showtime page');
+  });
+
+  it('publishes theater source pages with unknown time and asks the group to check times', async () => {
+    const { db, plan } = await setup();
+    const searchedAt = '2026-10-30T12:00:00.000Z';
+    const sources = [
+      { id: 'src_google', url: 'https://www.google.com/search?q=dune', title: 'Google showtimes for Dune', fetchedAt: searchedAt, provider: 'serpapi_google' as const, providerSearchId: null },
+      { id: 'src_theater', url: 'https://theater.example.org/dune', title: 'Cinema showtimes', fetchedAt: searchedAt, provider: 'serpapi_google' as const, providerSearchId: null },
+    ];
+    const discovery = {
+      ...fixtureDiscovery,
+      async searchMovie() { return []; },
+      async searchMovieEvidence() { return { candidates: [], sources }; },
+      async extractPublicPage(url: string) { return { source: { ...sources[1]!, id: 'src_extract', url, provider: 'serpapi_extract' as const }, facts: { text_content: { text: 'Showtimes are listed on this theater page' } } }; },
+      getSource(id: string) { return sources.find(s => s.id === id) ?? null; },
+    };
+    const muse = fakeMuse({ structured: [intent, { options: [] }] });
+    const result = await runPlanJob({ db, muse, discovery }, { planId: plan.id, inputRevision: plan.inputRevision });
+    expect(result.status).toBe('published');
+    if (result.status !== 'published') return;
+    expect(result.options[0]).toMatchObject({ startAt: null, endAt: null, fit: 'needs_clarification', sourceIds: ['src_extract'] });
+    expect((await db.select().from(outbox))[0]!.body).toContain('time unconfirmed');
+    expect((await db.select().from(outbox))[0]!.body).toContain('https://theater.example.org/dune');
+    expect((await db.select().from(outbox))[0]!.body).toContain('Which theater and time window');
+  });
+
+  it('keeps source-page theater options available when the request cap stops extraction', async () => {
+    const { db, plan } = await setup();
+    const searchedAt = '2026-10-30T12:00:00.000Z';
+    const sources = [
+      { id: 'src_google', url: 'https://www.google.com/search?q=dune', title: 'Google showtimes for Dune', fetchedAt: searchedAt, provider: 'serpapi_google' as const, providerSearchId: null },
+      ...[1, 2, 3].map(n => ({ id: `src_org_${n}`, url: `https://cinema${n}.example.org/showtimes`, title: `Cinema ${n}`, fetchedAt: searchedAt, provider: 'serpapi_google' as const, providerSearchId: null })),
+    ];
+    let extracted = 0;
+    const discovery = {
+      ...fixtureDiscovery,
+      async searchMovie() { return []; },
+      async searchMovieEvidence() { return { candidates: [], sources }; },
+      async extractPublicPage(url: string) {
+        if (extracted >= 2) throw new Error('SerpApi request limit reached');
+        extracted++;
+        return { source: { ...sources[1]!, id: `src_empty_${extracted}`, url, provider: 'serpapi_extract' as const }, facts: { text_content: { text: 'No film schedule on this page' } } };
+      },
+    };
+    const result = await runPlanJob({ db, muse: fakeMuse({ structured: [intent, { options: [] }] }), discovery }, { planId: plan.id, inputRevision: plan.inputRevision });
+    expect(result.status).toBe('published');
+    expect(extracted).toBe(2);
+    if (result.status === 'published') {
+      expect(result.options).toHaveLength(3);
+      expect(result.options.every(option => option.startAt === null && option.fit === 'needs_clarification')).toBe(true);
+    }
+  });
+
+  it('asks for another day or theater when movie evidence is empty', async () => {
+    const { db, plan } = await setup();
+    const discovery = {
+      ...fixtureDiscovery,
+      async searchMovie() { return []; },
+      async searchMovieEvidence() { return { candidates: [], sources: [] }; },
+    };
+    const result = await runPlanJob({ db, muse: fakeMuse({ structured: [intent] }), discovery }, { planId: plan.id, inputRevision: plan.inputRevision });
+    expect(result.status).toBe('no_options');
+    expect((await db.select().from(outbox))[0]!.body).toContain('Dune');
+    expect((await db.select().from(outbox))[0]!.body).toContain('another day or theater');
+  });
+
+  it('recovers a movie screening only when source text explicitly supports title, date and start time', async () => {
+    const { db, plan } = await setup();
+    const listingText = 'Dune: Part Two at Example Cinema. Sunday, November 1, 2026 at 8:00 PM.';
+    const discovery = { ...fixtureDiscovery, async searchMovie() { return []; }, async searchOutings() { return []; } };
+    const research = {
+      async search({ query, engine = 'google' }: { query: string; engine?: 'google' | 'google_events' | 'google_maps' }) {
+        return { sourceId: 'research_search_dune', url: 'https://search.example/dune', fetchedAt: '2026-10-30T12:00:00.000Z', engine, query, text: listingText, results: {} };
+      },
+      async read() { throw new Error('not needed'); },
+    };
+    const muse = fakeMuse({
+      structured: [intent, { candidates: [{ sourceId: 'research_search_dune', kind: 'movie_screening', title: 'Dune: Part Two', titleQuote: 'Dune: Part Two', venue: 'Example Cinema', venueQuote: 'at Example Cinema', date: '2026-11-01', dateQuote: 'Sunday, November 1, 2026', time: '20:00', timeQuote: '8:00 PM', timeZone: 'America/Chicago', priceText: null, priceQuote: null }] }, { options: [] }],
+      chat: [
+        { tool_calls: [{ id: 'r1', type: 'function', function: { name: 'search_public_web', arguments: JSON.stringify({ query: 'Dune showtimes Austin November 1', engine: 'google_events' }) } }] },
+        { content: 'A listing shows Dune at Example Cinema [research_search_dune].' },
+      ],
+    });
+    const result = await runPlanJob({ db, muse, discovery, research }, { planId: plan.id, inputRevision: plan.inputRevision });
+    expect(result.status).toBe('published');
+    if (result.status === 'published') expect(result.options[0]).toMatchObject({ startAt: '2026-11-02T02:00:00.000Z', sourceIds: ['research_search_dune'] });
+    expect(await db.select().from(sources)).toMatchObject([{ id: 'research_search_dune', fetchedAt: new Date('2026-10-30T12:00:00.000Z') }]);
+  });
+
+  it('researches three comedy venue listings and rejects Muse-invented performance times', async () => {
+    const { db, plan } = await setup();
+    const venues = ['venue-1', 'venue-2', 'venue-3'].map((id, i) => ({
+      id, kind: 'venue' as const, title: `Comedy Club ${i + 1}`, venueName: `Comedy Club ${i + 1}`, address: null,
+      timeZone: 'America/Chicago', startAt: null, durationMinutes: null, format: 'comedy', price: null,
+      rawPriceText: null, rawCurrency: null, priceKind: 'unknown' as const, bookingUrl: `https://club${i + 1}.example/`,
+      sourceIds: [], evidence: [],
+    }));
+    let searched = 0;
+    const discovery = { ...fixtureDiscovery, async searchOutings() { return venues; } };
+    const research = {
+      async search({ query, engine = 'google' }: { query: string; engine?: 'google' | 'google_events' | 'google_maps' }) {
+        searched++;
+        return { sourceId: 'research_comedy', url: 'https://search.example/comedy', fetchedAt: '2026-10-30T12:00:00.000Z', engine, query, text: 'Comedy clubs near Austin. No dated performance listing shown.', results: {} };
+      },
+      async read() { throw new Error('not needed'); },
+    };
+    const muse = fakeMuse({
+      structured: [
+        { kind: 'outing', movieTitle: null, movieTitles: [], searchQuery: 'comedy shows', durationMinutes: null, scheduledEvent: true },
+        { candidates: [] },
+        { options: [{ candidateId: 'venue-1', startAt: '2026-11-01T01:00:00.000Z', publicExplanation: 'A comedy listing nearby.' }] },
+      ],
+      chat: [
+        { tool_calls: [{ id: 'r1', type: 'function', function: { name: 'search_public_web', arguments: JSON.stringify({ query: 'Austin comedy shows this weekend', engine: 'google_events' }) } }] },
+        { content: 'No dated performance time is confirmed [research_comedy].' },
+      ],
+    });
+    const result = await runPlanJob({ db, muse, discovery, research }, { planId: plan.id, inputRevision: plan.inputRevision });
+    expect(searched).toBe(1);
+    expect(result.status).toBe('published');
+    if (result.status === 'published') expect(result.options[0]).toMatchObject({ startAt: null, uncertainties: expect.arrayContaining(['Event time not confirmed; check source page']) });
+    expect((await db.select().from(outbox))[0]!.body).toContain('time unconfirmed');
+    expect((await db.select().from(outbox))[0]!.body).not.toContain('Nov 1');
+  });
+
   it('drops conflicting and invented candidates, copies prices from sources, publishes and notifies the group', async () => {
     const { db, plan } = await setup();
     const muse = fakeMuse({ structured: [intent, { options: [pick('fx-m1'), pick('invented-venue'), pick('fx-m2'), pick('fx-m3')] }] });
@@ -121,6 +275,33 @@ describe('conversation', () => {
     expect((await db.select().from(outbox)).filter((o) => o.effectKey.startsWith('reply:'))).toHaveLength(1);
   });
 
+  it('recognizes a group sender by the phone they verified at signup', async () => {
+    const { db, u } = await setup();
+    await db.update(user).set({ phoneNumber: '+15125550101', phoneNumberVerified: true }).where(eq(user.id, u.Mark!));
+    const muse = fakeMuse({ chat: [{ content: 'Hi Mark!' }] });
+    const r = await handleInbound({ db, muse }, { sendingLine: '+15125550000', message: {
+      provider: 'linq', eventId: 'v1', messageId: 'v1', conversationExternalId: 'chat1', conversationKind: 'group', senderHandle: '+15125550101',
+      senderKind: 'phone', text: 'hey', occurredAt: '2026-10-30T18:00:00.000Z', replyToMessageId: null,
+    } });
+    expect(r).toEqual({ status: 'ok', replied: true });
+    const [ident] = await db.select().from(messagingIdentities).where(eq(messagingIdentities.handle, '+15125550101'));
+    expect(ident).toMatchObject({ userId: u.Mark, provider: 'linq' });
+  });
+
+  it('still answers when a reply hits its per-run limit, instead of going silent', async () => {
+    const { db, u } = await setup();
+    await db.insert(messagingIdentities).values({ userId: u.Mark!, provider: 'linq', handle: '+15125550101', kind: 'phone', verifiedAt: new Date() });
+    process.env.MUSE_RUN_DEADLINE_MS = '0';
+    try {
+      const r = await handleInbound({ db, muse: fakeMuse({ chat: [] }) }, { sendingLine: '+15125550000', message: {
+        provider: 'linq', eventId: 'l1', messageId: 'l1', conversationExternalId: 'chat1', conversationKind: 'group', senderHandle: '+15125550101',
+        senderKind: 'phone', text: 'find every comedy show in texas this year', occurredAt: '2026-10-30T18:00:00.000Z', replyToMessageId: null,
+      } });
+      expect(r).toMatchObject({ status: 'limit', replied: true });
+      expect((await db.select().from(outbox)).some((o) => o.effectKey.startsWith('agent-limit:') && o.body?.includes('narrow it down'))).toBe(true);
+    } finally { delete process.env.MUSE_RUN_DEADLINE_MS; }
+  });
+
   it('ignores senders without a verified identity', async () => {
     const { db } = await setup();
     const muse = fakeMuse({ chat: [] });
@@ -168,17 +349,19 @@ describe('conversation', () => {
   it('allows activity edits in a group and by the private organizer only', async () => {
     const { db, u, plan, conv } = await setup();
     const replan = toolsFor(['request_replan']).byName.get('request_replan')!;
+    expect(replan.args.safeParse({ reason: 'Changed dates', windowStart: '2026-10-31T00:00:00Z' }).success).toBe(false);
+    expect(replan.args.safeParse({ reason: 'Changed dates', windowStart: '2026-10-31', windowEnd: '2026-11-01' }).success).toBe(false);
     const actorCtx = (userId: string, kind: 'group' | 'private', id = conv.id): ToolCtx => ({
       db, actor: { userId, source: kind === 'group' ? 'group_message' : 'private_message', conversationId: id, sourceMessageId: 'm-tool' },
       planId: plan.id, conversation: { id, kind }, messageId: 'm-tool', providerMessageId: 'm-tool',
     });
-    const args = { reason: 'Changed our minds', newRequest: 'Go bowling this Saturday in Austin', kind: 'local-outing' as const };
+    const args = { reason: 'Changed our minds', newRequest: 'See Tron or Clayface in Austin next week', kind: 'movie-night' as const, windowStart: '2026-10-31T00:00:00.000Z', windowEnd: '2026-11-01T00:00:00.000Z' };
     await replan.run(actorCtx(u.Mark!, 'group'), args);
-    expect((await db.select().from(plans).where(eq(plans.id, plan.id)))[0]).toMatchObject({ request: args.newRequest, templateId: 'local-outing' });
+    expect((await db.select().from(plans).where(eq(plans.id, plan.id)))[0]).toMatchObject({ request: args.newRequest, templateId: 'movie-night', windowStart: new Date(args.windowStart), windowEnd: new Date(args.windowEnd) });
 
     const [privateConv] = await db.insert(conversations).values({ provider: 'linq', sendingLine: '+15125550000', externalChatId: 'private-alex', kind: 'private' }).returning();
-    await replan.run(actorCtx(u.Mark!, 'private', privateConv!.id), { reason: 'private appointment', newRequest: null, kind: null });
-    expect((await db.select().from(plans).where(eq(plans.id, plan.id)))[0]).toMatchObject({ request: args.newRequest, templateId: 'local-outing' });
+    await replan.run(actorCtx(u.Mark!, 'private', privateConv!.id), { reason: 'private appointment', newRequest: null, kind: null, windowStart: null, windowEnd: null });
+    expect((await db.select().from(plans).where(eq(plans.id, plan.id)))[0]).toMatchObject({ request: args.newRequest, templateId: 'movie-night', windowStart: new Date(args.windowStart), windowEnd: new Date(args.windowEnd) });
     const repairJobs = await db.select().from(jobs).where(eq(jobs.kind, 'repair'));
     expect((repairJobs.at(-1)!.payload as { reason: string }).reason).toBe("a participant's constraints changed");
     await expect(replan.run(actorCtx(u.Mark!, 'private', privateConv!.id), { ...args, newRequest: 'Go bowling with Mark' })).rejects.toThrow('Only the organizer');

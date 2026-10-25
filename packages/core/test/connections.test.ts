@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { friendInvites, friendships, jobs, outbox, planParticipants, plans, user, type Db } from '@hacktx/db';
 import {
-  acceptInviteForUser, createPlan, inviteByPhone, normalizePhone, open, phoneDigest, respondToFriendRequest,
+  acceptInviteForUser, closePlan, createPlan, inviteByPhone, normalizePhone, open, phoneDigest, respondToFriendRequest, updateParticipants,
 } from '@hacktx/core';
 import { austin, befriend, seedUsers, testDb, web } from './helpers';
 
@@ -107,8 +107,35 @@ describe('respondToFriendRequest', () => {
   it('declining leaves the plan waiting', async () => {
     const p = await plan();
     await inviteByPhone(db, web(ids.Alex!), { name: 'Mark', phone: '+15125550101', planId: p.id });
+    const [invite] = await db.select().from(friendInvites);
     expect(await respondToFriendRequest(db, web(ids.Mark!), ids.Alex!, false)).toMatchObject({ status: 'declined' });
     expect(await statusOf(p.id)).toBe('waiting_connections');
+    const messages = await db.select().from(outbox);
+    expect(messages).toHaveLength(2);
+    const notice = messages.find((message) => message.effectKey === `frienddecline:${invite!.id}:${p.id}`)!;
+    expect(notice.recipient).toEqual({ kind: 'private', userId: ids.Alex });
+    expect(notice.planId).toBe(p.id);
+    expect(outboxText(notice)).toBe("Mark isn't connecting right now. Want me to plan without them, or stop this plan?");
+    expect(messages.filter((message) => message.id !== notice.id).every((message) => (message.recipient as { kind: string }).kind === 'invite')).toBe(true);
+  });
+
+  it('removes an unresolved invite seat and resumes when the remaining members are connected', async () => {
+    const p = await plan([ids.Mark!]);
+    await inviteByPhone(db, web(ids.Alex!), { name: 'Sam', phone: NEW_PHONE, planId: p.id });
+    const [invite] = await db.select().from(friendInvites);
+    await befriend(db, ids.Alex!, ids.Mark!);
+    await updateParticipants(db, web(ids.Alex!), { planId: p.id, add: [], remove: [], removeInviteIds: [invite!.id], expectedRevision: (await db.select().from(plans).where(eq(plans.id, p.id)))[0]!.inputRevision });
+    expect(await statusOf(p.id)).toBe('planning');
+    const seats = await db.select().from(planParticipants).where(eq(planParticipants.planId, p.id));
+    expect(seats.map((s) => s.userId)).toContain(ids.Mark);
+    expect(seats.some((s) => s.inviteId === invite!.id)).toBe(false);
+    expect(await planJobs(p.id)).toHaveLength(1);
+  });
+
+  it('allows the organizer to close a waiting plan', async () => {
+    const p = await plan([ids.Mark!]);
+    await closePlan(db, web(ids.Alex!), p.id, 0);
+    expect(await statusOf(p.id)).toBe('closed');
   });
 });
 

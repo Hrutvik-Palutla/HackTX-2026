@@ -24,12 +24,12 @@ Text notes, manual availability, web chat, and ICS calendar downloads remain ava
 ## Run locally
 
 Use Node **24.22.1** and pnpm **10.34.8**. Copy the privately supplied `.env.team` to `.env`, or fill the placeholders in `.env.example`. Real keys and the team file are Git-ignored.
-Web dev/start and the worker automatically load the root `.env` and optional `.env.local`; externally supplied environment variables retain precedence.
+Web dev/start and the worker automatically load the root `.env` and optional `.env.local`; externally supplied environment variables retain precedence. Local workers do not open the production Claw listener. The hosted worker is the sole production listener. For a real local iMessage run, `live-agent.ts` requires a separate Claw account, `CLAW_DEV_MESSENGER_API_KEY`, `CLAW_DEV_MESSENGER_FROM_PHONE`, and `LIVE_AGENT_ALLOW_CLAW_LISTENER=true`; another API key in the production Claw account is not isolated.
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm dev
-# Separate terminal, same environment:
+# Separate terminal, same environment. Claw listening stays disabled locally by default:
 pnpm worker
 ```
 
@@ -38,6 +38,10 @@ The web app is at `http://localhost:3000`; match `APP_BASE_URL`, `BETTER_AUTH_UR
 `TEAM_ADMIN_PHONES` is a comma-separated list of approved E.164 numbers. Studio access is granted only after Better Auth verifies ownership of that phone. `TEAM_ADMIN_USER_IDS` also supports an explicit user-ID allowlist.
 
 The shared Tiger service uses `sslmode=verify-full`. Its baseline is already initialized; never point the new baseline at the old service with the superseded schema. The worker uses the same encryption key and database as the web process.
+
+The workflow reliability update requires the incremental migration [0001_workflow_reliability.sql](packages/db/drizzle/0001_workflow_reliability.sql) before starting the updated web/worker against an existing database. It adds encrypted pending group requests, stored public research evidence, conversation-scoped jobs and worker heartbeats. Do not reapply the baseline. Local fixture tests apply both migrations to an isolated PGlite database automatically.
+
+The worker has two processing lanes and a separate delivery lane. Jobs in the same conversation or plan stay ordered. Production readiness requires fresh processing and connected delivery heartbeats for the deployed revision; local web-only development does not require them unless `REQUIRE_WORKER_READY=true`.
 
 ## Checks and demo data
 

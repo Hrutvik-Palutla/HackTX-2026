@@ -1,6 +1,8 @@
 import { isIP } from 'node:net';
 import { createHash } from 'node:crypto';
 import type { Candidate, City, Evidence, Interval, Money, Source } from '../../fulfillment/src/types.ts';
+import { SerpApiResearch } from './research.ts';
+import type { ResearchPort } from '../../contracts/src/index.ts';
 
 type JsonRecord = Record<string, unknown>;
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -126,6 +128,7 @@ export class SerpApiClient {
   private readonly maxCacheEntries: number;
   private readonly now: () => Date;
   private requestCount = 0;
+  private requestSignal?: AbortSignal;
   private readonly cache = new Map<string, CacheEntry>();
 
   constructor(options: SerpApiClientOptions = {}) {
@@ -144,13 +147,16 @@ export class SerpApiClient {
   }
 
   get requestsUsed(): number { return this.requestCount; }
+  setAbortSignal(signal: AbortSignal) { this.requestSignal = signal; }
   clearCache(): void { this.cache.clear(); }
 
   async search(params: Record<string, string>): Promise<JsonRecord> {
     return (await this.searchWithMetadata(params)).body;
   }
 
-  async searchWithMetadata(params: Record<string, string>): Promise<SearchResult> {
+  async searchWithMetadata(params: Record<string, string>, signal?: AbortSignal): Promise<SearchResult> {
+    signal = this.requestSignal ? (signal ? AbortSignal.any([signal, this.requestSignal]) : this.requestSignal) : signal;
+    signal?.throwIfAborted();
     if (!this.apiKey) throw new SerpApiError('SerpApi API key is not configured');
     const canonical = new URLSearchParams(Object.entries(params).sort(([a], [b]) => a.localeCompare(b))).toString();
     const cached = this.cache.get(canonical);
@@ -163,7 +169,7 @@ export class SerpApiClient {
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
     url.searchParams.set('api_key', this.apiKey);
     try {
-      const response = await this.fetcher(url, { signal: AbortSignal.timeout(this.timeoutMs) });
+      const response = await this.fetcher(url, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs) });
       if (!response.ok) {
         let detail = '';
         try {
@@ -189,6 +195,7 @@ export class SerpApiClient {
       }
       return { body: structuredClone(body), fetchedAt, cacheHit: false };
     } catch (error) {
+      signal?.throwIfAborted();
       if (error instanceof SerpApiError) throw error;
       if (error instanceof DOMException && error.name === 'TimeoutError') throw new SerpApiError('SerpApi request timed out');
       const cause = error instanceof Error ? error.cause : null;
@@ -367,9 +374,14 @@ export type DiscoveryDiagnostic = {
 export type MovieSearchEvidence = { candidates: Candidate[]; sources: Source[]; diagnostics: DiscoveryDiagnostic[] };
 export class SerpApiDiscovery {
   readonly client: SerpApiClient;
+  readonly research: ResearchPort;
+  private readonly options: DiscoveryOptions;
   private readonly sources = new Map<string, Source>();
   private diagnostics: DiscoveryDiagnostic[] = [];
-  constructor(options: DiscoveryOptions = {}) { this.client = new SerpApiClient(options); }
+  constructor(options: DiscoveryOptions = {}) { this.options = { ...options }; this.client = new SerpApiClient(options); this.research = new SerpApiResearch(this.client); }
+
+  /** A fresh per-run quota scope. Cache reuse is optional; request limits always remain enforced per run. */
+  newSession(): SerpApiDiscovery { return new SerpApiDiscovery(this.options); }
 
   getSources(): Source[] { return [...this.sources.values()].map(source => ({ ...source })); }
   getDiagnostics(): DiscoveryDiagnostic[] { return this.diagnostics.map(diagnostic => ({ ...diagnostic })); }
@@ -381,6 +393,8 @@ export class SerpApiDiscovery {
     const error = reason instanceof SerpApiError ? reason : new SerpApiError('SerpApi request failed');
     this.diagnostics.push({ engine, code: code ?? (error.status ? `HTTP_${error.status}` : 'REQUEST_FAILED'), status: error.status ?? null, message: error.message, occurredAt: this.client.timestamp() });
   }
+
+  setAbortSignal(signal: AbortSignal) { this.client.setAbortSignal(signal); }
 
   async searchMovie(input: { title: string; city: City; window: Interval }): Promise<Candidate[]> {
     return (await this.searchMovieEvidence(input)).candidates;

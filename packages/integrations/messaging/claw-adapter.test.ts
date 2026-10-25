@@ -210,6 +210,16 @@ describe('added to a group', () => {
       ['+15125550100', true, true], ['+15125550101', false, false],
     ]);
   });
+
+  it('names members by their verified account phone even with no messaging identity yet', async () => {
+    // u_alex verified +15125550100 at signup but never opened a page that links it.
+    await ingestClawMessage(db, LINE, inbound({ messageId: 'n1', chatId: 'gc', from: '+15125550101', isGroup: true, participants: ['+15125550100', '+15125550101', LINE] }));
+    const [ident] = await db.select().from(messagingIdentities).where(eq(messagingIdentities.handle, '+15125550100'));
+    expect(ident).toMatchObject({ userId: 'u_alex', provider: CLAW_PROVIDER });
+    const members = await db.select().from(conversationMembers);
+    expect(members.find((m) => m.unresolvedHandle === '+15125550100')!.messagingIdentityId).toBe(ident!.id);
+    expect(members.find((m) => m.unresolvedHandle === '+15125550101')!.messagingIdentityId).toBeNull(); // no account: stays unnamed
+  });
 });
 
 describe('createClawGroup', () => {

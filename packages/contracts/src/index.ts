@@ -53,7 +53,7 @@ export const Source = z.object({
   url: z.url(),
   title: z.string(),
   fetchedAt: Instant,
-  provider: z.enum(['serpapi_google', 'serpapi_maps', 'serpapi_events', 'serpapi_extract', 'merchant']),
+  provider: z.string().refine((value) => value === 'merchant' || /^serpapi_[a-z0-9_]+$/i.test(value), 'Unsupported source provider'),
   providerSearchId: z.string().nullable(),
 });
 export type Source = z.infer<typeof Source>;
@@ -95,8 +95,8 @@ export const PlanOption = z.object({
   label: OptionLabel,
   title: z.string(),
   candidateIds: z.array(Id).min(1),
-  startAt: Instant,
-  endAt: Instant,
+  startAt: Instant.nullable(),
+  endAt: Instant.nullable(),
   timeZone: z.string(),
   timeline: z.array(z.object({ title: z.string(), startAt: Instant, endAt: Instant, candidateId: Id })),
   estimatedPerPerson: Money.nullable(),
@@ -240,11 +240,28 @@ export interface MessagingPort {
 }
 
 export interface DiscoveryPort {
+  /** Bind cancellation to a job-scoped discovery session. */
+  setAbortSignal?(signal: AbortSignal): void;
   searchMovie(input: { title: string; city: City; window: Interval }): Promise<Candidate[]>;
   searchOutings(input: { query: string; city: City; window: Interval }): Promise<Candidate[]>;
   extractPublicPage(url: string): Promise<{ source: Source; facts: unknown }>;
   /** Source metadata for ids referenced by returned candidates (Part 4's SerpApi adapter provides this). */
   getSource?(sourceId: Id): Source | null;
+}
+
+export type ResearchSearchEvidence = {
+  sourceId: Id; url: string; fetchedAt: Instant; engine: string;
+  query: string; text: string; results: Record<string, unknown>;
+};
+export type ResearchAction = { kind: 'click' | 'select'; label: string; value?: string };
+export type ResearchPageEvidence = {
+  sourceId: Id; url: string; fetchedAt: Instant; text: string; title: string | null;
+  links?: Array<{ text: string; url: string }>; structuredDataText?: string[];
+};
+export interface ResearchPort {
+  /** Any SerpApi engine and documented public search parameters; adapter validates names and bounds payload size. */
+  search(input: { query: string; engine?: string; params?: Record<string, string>; signal?: AbortSignal }): Promise<ResearchSearchEvidence>;
+  read(input: { url: string; render?: boolean; actions?: ResearchAction[]; signal?: AbortSignal }): Promise<ResearchPageEvidence>;
 }
 
 export type BusyResult = { busy: Interval[]; fetchedAt: Instant; status: 'ok' | 'disconnected' | 'error' };

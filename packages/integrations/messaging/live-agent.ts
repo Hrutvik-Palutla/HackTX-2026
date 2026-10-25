@@ -4,9 +4,12 @@
 // SERPAPI_API_KEY is set, otherwise FIXTURE-labeled data) + Part 3's send/poll handlers, on an in-memory database.
 // Team accounts come from `.env.team.json` (git-ignored by the `.env.*` rule), all mutually connected friends:
 //   [{ "name": "Sid", "phone": "+15125550100" }, { "name": "Mark", "phone": "+15125550101" }]
-// State resets when the script stops. Not used by the deployed app.
+// Local state persists across restarts in .sidequest/live-db (override LIVE_AGENT_DB_PATH).
+// It must use a separate Claw account and explicit local credentials. Claw allows multiple
+// sockets per account, so reusing production credentials can create competing consumers.
 import { randomBytes, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
@@ -32,15 +35,18 @@ const team = JSON.parse(readFileSync('.env.team.json', 'utf8')) as { name: strin
 const austin = { label: 'Austin, Texas, United States', countryCode: 'US', latitude: 30.27, longitude: -97.74, timeZone: 'America/Chicago' };
 
 process.env.APP_ENCRYPTION_KEY ??= randomBytes(32).toString('base64');
-const db = drizzle(new PGlite(), { schema }) as unknown as Db;
+const liveDbPath = process.env.LIVE_AGENT_DB_PATH ?? '.sidequest/live-db';
+mkdirSync(dirname(liveDbPath), { recursive: true, mode: 0o700 });
+const localDb = new PGlite(liveDbPath);
+const db = drizzle(localDb, { schema }) as unknown as Db;
 await migrate(db as never, { migrationsFolder });
 const ids = team.map((t) => ({ ...t, id: `u_${t.name.toLowerCase().replace(/\W+/g, '_')}` }));
 for (const t of ids) {
-  await db.insert(user).values({ id: t.id, name: t.name, email: `${t.id}@users.invalid`, city: JSON.stringify(austin), emailVerified: false, phoneNumber: t.phone, phoneNumberVerified: true, onboardingComplete: true });
+  await db.insert(user).values({ id: t.id, name: t.name, email: `${t.id}@users.invalid`, city: JSON.stringify(austin), emailVerified: false, phoneNumber: t.phone, phoneNumberVerified: true, onboardingComplete: true }).onConflictDoNothing();
   await linkVerifiedPhone(db, t.id, t.phone);
 }
 for (const a of ids) for (const b of ids) {
-  if (a.id < b.id) await db.insert(friendships).values({ userLow: a.id, userHigh: b.id, requestedBy: a.id, status: 'accepted', acceptedAt: new Date() });
+  if (a.id < b.id) await db.insert(friendships).values({ userLow: a.id, userHigh: b.id, requestedBy: a.id, status: 'accepted', acceptedAt: new Date() }).onConflictDoNothing();
 }
 console.log(`[live] ${ids.length} connected accounts: ${ids.map((t) => `${t.name} (…${t.phone.slice(-4)})`).join(', ')}`);
 
@@ -57,8 +63,19 @@ try { calendar = new GoogleCalendar(db, googleConfig()); } catch { /* GOOGLE_* u
 console.log(`[live] calendar: ${calendar ? 'Google free/busy' : 'disabled (set GOOGLE_* for free/busy)'}`);
 
 const muse = createMuse();
-const claw = await startClawMessenger({ db });
-if (!claw) { console.error('Set CLAW_MESSENGER_API_KEY and CLAW_MESSENGER_FROM_PHONE in .env'); process.exit(1); }
+const localClawKey = process.env.CLAW_DEV_MESSENGER_API_KEY;
+const localSendingLine = process.env.CLAW_DEV_MESSENGER_FROM_PHONE;
+if (!localClawKey || !localSendingLine || process.env.LIVE_AGENT_ALLOW_CLAW_LISTENER !== 'true') {
+  console.error('Local listener blocked. Use a separate Claw account, set CLAW_DEV_MESSENGER_API_KEY and CLAW_DEV_MESSENGER_FROM_PHONE, then explicitly set LIVE_AGENT_ALLOW_CLAW_LISTENER=true.');
+  process.exit(1);
+}
+const claw = await startClawMessenger({ db, env: {
+  ...process.env,
+  CLAW_MESSENGER_API_KEY: localClawKey,
+  CLAW_MESSENGER_FROM_PHONE: localSendingLine,
+  CLAW_LISTENER_ENABLED: 'true',
+} });
+if (!claw) { console.error('Could not start the isolated Claw listener.'); process.exit(1); }
 
 // Payments in local runs: Part 4's real FulfillmentService with an in-memory store and its owned TEST wallet.
 // Real venues have no direct-booking provider, so a quote becomes an honest checkout handoff ("Buyer reports booked").
@@ -95,12 +112,14 @@ configureFulfillment(service);
 console.log(`[live] payments: ${testQuotes ? 'TEST quotes + test wallet (fake money)' : 'checkout handoff (no direct booking)'}`);
 const fulfillment = fulfillmentJobHandlers(p4.createFulfillmentJobHandlers(service));
 
-const handlers = agentHandlers({ fulfillment, db, muse, discovery, calendar, client: claw.client, sendingLine: process.env.CLAW_MESSENGER_FROM_PHONE! });
+const handlers = agentHandlers({ fulfillment, db, muse, discovery, calendar, client: claw.client, sendingLine: localSendingLine });
 let stopping = false;
 process.on('SIGINT', () => { stopping = true; });
+console.log(`[live] revision=${process.env.SOURCE_REVISION ?? 'local'} persistent state enabled; using isolated Claw account and sender.`);
 console.log('[live] agent running; text it or message a group it is in. Ctrl+C to stop.');
 while (!stopping) {
   if (!(await runOne(db, handlers))) await new Promise((r) => setTimeout(r, 500));
 }
 await claw.stop();
+await localDb.close();
 process.exit(0);

@@ -2,6 +2,13 @@
 
 Each owner keeps their own section current: status, files, what actually works + the check run, blockers, next action.
 
+## Group-chat recovery fixes — October 25
+
+- On top of `eae4bac`: source-backed movie page extraction with bounded requests, honest unknown-time theater choices, private decline notifications, organizer-only remove/close tools, and buyer-confirmed unpurchased handoff cancellation before replanning. Unknown-time choices cannot become bookings or calendar events.
+- Repaired the real PostgreSQL account integration test to use the application's actual baseline in a disposable schema and expect invitation IDs in acceptance callbacks. This fixes the CI failure that prevented the preceding commits from deploying.
+- Local checks: 70 backend/cross-part tests, 37 messaging/calendar tests, 75 discovery/booking/payment tests including an owned fake-money browser checkout, 13 account tests, 1 real PostgreSQL integration test, 30 desktop/mobile browser checks, and 2 runtime script tests; root/worker/web type checks and Next production build pass. No real purchases were made.
+- The real account integration test created and dropped only a random isolated schema on the provided team database. No shared production schema migration was run. Team configuration is in ignored `.env.team` and `.env`, with private file permissions.
+- [Ideal workflows](docs/IDEAL_WORKFLOWS.md) is a desired-behavior checklist, not an implementation audit.
 ## Chat-first UX and visual proposal — ready for review; not deployed (October 25)
 
 - **Owner:** current integration agent, authorized to improve copy/flow and commit a separate review branch. Based on latest upstream `eae4bac`, preserving the teammate's Sid integration. Branch: `design/chat-first-preview`.

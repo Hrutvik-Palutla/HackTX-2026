@@ -1,6 +1,6 @@
 // Messaging and web use the same invitation rows and account encryption format.
 import { randomBytes, randomUUID } from 'node:crypto';
-import { and, eq, gt, sql } from 'drizzle-orm';
+import { and, eq, gt, or, sql } from 'drizzle-orm';
 import { encryptPhone, phoneDigest as accountPhoneDigest, tokenDigest } from '@muse/accounts';
 import { friendInvites, friendships, planParticipants, plans, user, type Db } from '@hacktx/db';
 import type { ActorContext, PlanStatus } from '@hacktx/contracts';
@@ -104,6 +104,23 @@ async function resolveInvite(db: Db, actor: ActorContext, invitationId: string, 
       }
       resumedPlanIds = [...new Set([...await resumeWaitingPlans(tx, actor.userId), ...await resumeWaitingPlans(tx, invite.inviterUserId)])];
       await enqueueMessage(tx, { recipient: { kind: 'private', userId: invite.inviterUserId }, text: `${await nameOf(tx, actor.userId)} accepted your SideQuest connection.`, effectKey: `friendaccept:${invite.id}` });
+    } else {
+      const declinedName = await nameOf(tx, actor.userId);
+      const plansToNotify = await tx.selectDistinct({ id: plans.id }).from(planParticipants)
+        .innerJoin(plans, eq(plans.id, planParticipants.planId))
+        .where(and(
+          eq(plans.organizerUserId, invite.inviterUserId),
+          eq(plans.status, 'waiting_connections'),
+          or(eq(planParticipants.inviteId, invite.id), eq(planParticipants.userId, actor.userId)),
+        ));
+      for (const plan of plansToNotify) {
+        await enqueueMessage(tx, {
+          recipient: { kind: 'private', userId: invite.inviterUserId },
+          text: `${declinedName} isn't connecting right now. Want me to plan without them, or stop this plan?`,
+          effectKey: `frienddecline:${invite.id}:${plan.id}`,
+          planId: plan.id,
+        });
+      }
     }
     return { inviterId: invite.inviterUserId, resumedPlanIds };
   });

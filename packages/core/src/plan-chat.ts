@@ -54,7 +54,7 @@ export async function postPlanChat(db: Db, actor: ActorContext, input: { planId:
       const [sender] = await tx.select({ name: user.name }).from(user).where(eq(user.id, actor.userId));
       await enqueueMessage(tx, { recipient: { kind: 'group', conversationId: conv.id }, text: `${sender?.name ?? 'A friend'} (via SideQuest): ${input.text}`, effectKey: `web-group:${row!.id}`, planId: input.planId, expiresAt: new Date(Date.now() + 90_000) });
     }
-    await enqueue(tx, { kind: 'process_inbound', planId: input.planId, dedupeKey: `web:${row!.id}`, payload: { web: { messageId: row!.id } } });
+    await enqueue(tx, { kind: 'process_inbound', planId: input.planId, conversationId: conv.id, dedupeKey: `web:${row!.id}`, payload: { web: { messageId: row!.id } } });
     return { messageId: row!.id, destination: input.destination };
   });
 }

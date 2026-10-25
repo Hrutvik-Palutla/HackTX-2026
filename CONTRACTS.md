@@ -28,6 +28,12 @@
 
 Proposed v1 contract for the architecture in [ARCHITECTURE.md](ARCHITECTURE.md). Part 2 (Agent & Backend) owns this file, `packages/contracts`, and shared database migrations; other parts supply their feature requirements. Cross-part schema changes are reviewed with affected owners. See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the four selectable parts and route ownership. The declarations below describe our application, not vendor SDK methods. Implement them as Zod schemas and inferred TypeScript types. Dependency versions and actual vendor payload fixtures are pinned during the access spikes.
 
+## Conversation recovery addendum
+
+- Movie discovery may extract at most three source pages within the search/request limits. A dated screening needs the requested title, explicit date and local clock time on the page. Without that evidence, source-backed theater choices use null times and `needs_clarification`; selection, checkout and calendar creation wait for a real time.
+- A declined invitation privately notifies the organizer for each affected waiting plan. `remove_participant` and `close_plan` require the organizer's explicit instruction. Pending invite seats are removable without inventing an account, and remaining connections are checked before resuming.
+- `cancel_handoff` requires the nominated buyer to confirm the purchase was not made. Only `handoff_required` can be resolved this way; uncertain or successful purchases stay protected. Replanning is blocked until the pending purchase is resolved.
+
 ## 1. Representation and invariants
 
 - IDs are opaque strings. User IDs follow Better Auth's generated schema; application entity IDs are server-generated UUIDs. Never derive identity from a display name.
@@ -115,8 +121,8 @@ type PlanOption = {
   label: 'A' | 'B' | 'C';
   title: string;
   candidateIds: Id[];
-  startAt: Instant;
-  endAt: Instant;
+  startAt: Instant | null; // unknown-time theater suggestions cannot be selected or booked
+  endAt: Instant | null;
   timeZone: string;
   timeline: { title: string; startAt: Instant; endAt: Instant; candidateId: Id }[];
   estimatedPerPerson: Money | null;

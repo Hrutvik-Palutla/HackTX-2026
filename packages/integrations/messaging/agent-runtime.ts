@@ -1,7 +1,7 @@
 // Shared job loop for local agent runs (live-agent.ts over real iMessage, flow-sim.ts with a fake client).
 // Same handlers the deployed worker registers; kept here so both local tools exercise identical code.
 import { claim, complete, configurePlanGroupCreator, fail, AppError, type Job } from '@hacktx/core';
-import type { CalendarPort, DiscoveryPort, JobKind } from '@hacktx/contracts';
+import type { CalendarPort, DiscoveryPort, JobKind, ResearchPort } from '@hacktx/contracts';
 import type { Db } from '@hacktx/db';
 import { handleInbound, runPlanJob, runPollReminder, type InboundJob } from '@hacktx/agent';
 import { createSyncCalendarHandler } from '../calendar-jobs.ts';
@@ -12,17 +12,19 @@ type Muse = Parameters<typeof handleInbound>[0]['muse'];
 type H = (job: Job) => Promise<unknown>;
 
 export function agentHandlers(o: {
-  db: Db; muse: Muse; discovery: DiscoveryPort; calendar?: CalendarPort; client: Pick<ClawMessengerClient, 'send'>; sendingLine: string;
+  db: Db; muse: Muse; discovery: DiscoveryPort & { research?: ResearchPort; newSession?: () => DiscoveryPort & { research?: ResearchPort } }; calendar?: CalendarPort; client: Pick<ClawMessengerClient, 'send'>; sendingLine: string;
   fulfillment?: Record<string, (ctx: { db: Db; job: Job }) => Promise<unknown>>;
 }) {
   const { db, muse, discovery, calendar } = o;
+  const session = () => discovery.newSession?.() ?? discovery;
+  const plan = (job: Job) => { const current = session(); return runPlanJob({ db, muse, discovery: current, research: current.research, calendar }, job.payload as { planId: string; inputRevision: number; reason?: string }); };
   configurePlanGroupCreator(createClawGroupCreator(o.client, o.sendingLine));
   const send = createSendOutboxHandler(o.client);
   const poll = createPublishPollHandler();
   return new Map<JobKind, H>([
-    ['process_inbound', (job) => handleInbound({ db, muse }, job.payload as InboundJob)],
-    ['plan', (job) => runPlanJob({ db, muse, discovery, calendar }, job.payload as { planId: string; inputRevision: number })],
-    ['repair', (job) => runPlanJob({ db, muse, discovery, calendar }, job.payload as { planId: string; inputRevision: number; reason?: string })],
+    ['process_inbound', (job) => handleInbound({ db, muse, research: session().research }, job.payload as InboundJob)],
+    ['plan', plan],
+    ['repair', plan],
     ['poll_reminder', (job) => runPollReminder(db, job.payload as { planId: string; versionId: string })],
     ['send_outbox', (job) => send({ db, job })],
     ['publish_poll', (job) => poll({ db, job })],

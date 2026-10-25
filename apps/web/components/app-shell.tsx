@@ -6,15 +6,22 @@ import { NavigationIcon } from "./navigation-icon";
 export const viewDescriptions: Record<string, string> = {
   plans: "Your group’s plans, votes and messages.",
   friends: "Friends who can plan with you.",
-  settings: "Manage your profile and account preferences.",
+  settings: "Your profile, calendar and account.",
   detail: "Choose every option that works, then pick a favorite.",
   private: "Notes for Sid that your friends can’t see.",
   payment: "Review your share and payment status.",
   studio: "Edit Sid’s instructions and review what happened.",
   login: "Use your phone to access your own group.",
-  signup: "Create your account to plan with friends.",
+  signup: "A few details so your friends recognize you.",
   invite: "Connect with the friend who invited you.",
 };
+
+// Signed-in destinations, in sidebar order.
+const SECTIONS = [
+  ["friends", "Friends"],
+  ["plans", "Current Plans"],
+  ["settings", "Settings"],
+] as const;
 
 export function AppShell({
   view,
@@ -28,26 +35,55 @@ export function AppShell({
   children: ReactNode;
 }) {
   const href = (path: string) => (preview ? `${path}?preview=1` : path);
-  const publicPage = ['home', 'example', 'demo'].includes(view);
-  return (
-    <div className="app" data-view={view}>
-      <header className="app-header">
-        <Link className="logo" href={publicPage ? '/' : href("/plans")}>
+  const publicPage = ["home", "example", "demo"].includes(view);
+  const authPage = ["login", "signup"].includes(view);
+
+  if (publicPage) {
+    return (
+      <div className="app" data-view={view}>
+        <header className="app-header">
+          <Link className="logo" href="/">
+            <SideQuestLogo />
+          </Link>
+          <nav className="app-nav" aria-label="Main navigation">
+            <Link href="/try">Try it</Link>
+            <Link href="/">Sign in</Link>
+          </nav>
+        </header>
+        <main className="app-main">{children}</main>
+        <footer className="app-footer">
+          <span>SideQuest</span>
+          <span>{footer ?? ""}</span>
+        </footer>
+      </div>
+    );
+  }
+
+  if (authPage) {
+    return (
+      <div className="auth-layout" data-view={view}>
+        <Link className="logo" href="/">
           <SideQuestLogo />
         </Link>
-        <nav className="app-nav" aria-label="Main navigation">
-          {publicPage ? <><Link href="/try">Try it</Link><Link href="/#how-it-works">How it works</Link><Link href="/login">Sign in</Link></> : [
-            ["plans", "Plans"],
-            ["friends", "Friends"],
-            ["settings", "Account"],
-          ].map(([key, label]) => (
+        <main className="auth-main">{children}</main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="console" data-view={view}>
+      <aside className="console-sidebar">
+        <Link className="logo" href={href("/plans")}>
+          <SideQuestLogo />
+        </Link>
+        <nav className="console-nav" aria-label="Main navigation">
+          {SECTIONS.map(([key, label]) => (
             <Link
               key={key}
               href={href(`/${key}`)}
               aria-current={
                 view === key ||
-                (key === "plans" &&
-                  ["detail", "private", "payment"].includes(view))
+                (key === "plans" && ["detail", "private", "payment"].includes(view))
                   ? "page"
                   : undefined
               }
@@ -57,8 +93,9 @@ export function AppShell({
             </Link>
           ))}
         </nav>
-      </header>
-      <main className="app-main">
+        <div className="console-sidebar-foot">{footer}</div>
+      </aside>
+      <main className="console-main">
         {preview && (
           <p className="notice">
             Preview · Sample data. Changes reset when you leave the page.
@@ -66,15 +103,6 @@ export function AppShell({
         )}
         {children}
       </main>
-      <footer className="app-footer">
-        <span>SideQuest</span>
-        <span>
-          {footer ??
-            (preview
-              ? "Sample workspace · Austin"
-              : "")}
-        </span>
-      </footer>
     </div>
   );
 }

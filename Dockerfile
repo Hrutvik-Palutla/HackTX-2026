@@ -8,6 +8,8 @@ COPY apps apps
 COPY packages packages
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @hacktx/booking-worker deploy --legacy --prod /opt/sidequest-link
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN pnpm --filter @hacktx/booking-worker exec playwright install --with-deps chromium && chmod -R a+rX /ms-playwright
 RUN install -d -m 0700 -o node -g node /var/lib/sidequest/link-auth
 RUN NEXT_STANDALONE=1 pnpm --filter @muse/web build
 

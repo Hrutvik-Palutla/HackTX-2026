@@ -1,5 +1,5 @@
 {
-  "id": "4de2cc92-9efd-449f-938a-fd6f50f14109",
+  "id": "c9433da2-119e-45d6-87c2-ebf2a8ce5a0f",
   "prevId": "fb0b4301-35ee-4e95-bf2f-9514213b670c",
   "version": "7",
   "dialect": "postgresql",
@@ -765,6 +765,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "membership_complete": {
+          "name": "membership_complete",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "active_plan_id": {
           "name": "active_plan_id",
@@ -1644,6 +1651,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "dedupe_key": {
           "name": "dedupe_key",
           "type": "text",
@@ -1754,6 +1767,19 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "jobs_conversation_id_conversations_id_fk": {
+          "name": "jobs_conversation_id_conversations_id_fk",
+          "tableFrom": "jobs",
+          "tableTo": "conversations",
+          "columnsFrom": [
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1786,12 +1812,6 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
-        },
-        "plan_id": {
-          "name": "plan_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
         },
         "provider_message_id": {
           "name": "provider_message_id",
@@ -1863,27 +1883,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "messages_plan_id_occurred_at_index": {
-          "name": "messages_plan_id_occurred_at_index",
-          "columns": [
-            {
-              "expression": "plan_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "occurred_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -1898,19 +1897,6 @@
             "id"
           ],
           "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "messages_plan_id_plans_id_fk": {
-          "name": "messages_plan_id_plans_id_fk",
-          "tableFrom": "messages",
-          "tableTo": "plans",
-          "columnsFrom": [
-            "plan_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
           "onUpdate": "no action"
         },
         "messages_sender_user_id_user_id_fk": {
@@ -2675,6 +2661,113 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.planning_drafts": {
+      "name": "planning_drafts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organizer_user_id": {
+          "name": "organizer_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_enc": {
+          "name": "request_enc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "plan_id": {
+          "name": "plan_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "planning_drafts_organizer_user_id_user_id_fk": {
+          "name": "planning_drafts_organizer_user_id_user_id_fk",
+          "tableFrom": "planning_drafts",
+          "tableTo": "user",
+          "columnsFrom": [
+            "organizer_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "planning_drafts_conversation_id_conversations_id_fk": {
+          "name": "planning_drafts_conversation_id_conversations_id_fk",
+          "tableFrom": "planning_drafts",
+          "tableTo": "conversations",
+          "columnsFrom": [
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "planning_drafts_plan_id_plans_id_fk": {
+          "name": "planning_drafts_plan_id_plans_id_fk",
+          "tableFrom": "planning_drafts",
+          "tableTo": "plans",
+          "columnsFrom": [
+            "plan_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "planning_drafts_organizer_user_id_conversation_id_unique": {
+          "name": "planning_drafts_organizer_user_id_conversation_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organizer_user_id",
+            "conversation_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.plans": {
       "name": "plans",
       "schema": "",
@@ -3103,6 +3196,52 @@
           ]
         }
       },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.research_evidence": {
+      "name": "research_evidence",
+      "schema": "",
+      "columns": {
+        "source_id": {
+          "name": "source_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "research_evidence_source_id_sources_id_fk": {
+          "name": "research_evidence_source_id_sources_id_fk",
+          "tableFrom": "research_evidence",
+          "tableTo": "sources",
+          "columnsFrom": [
+            "source_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -3813,6 +3952,50 @@
           ]
         }
       },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.worker_heartbeats": {
+      "name": "worker_heartbeats",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connected": {
+          "name": "connected",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
