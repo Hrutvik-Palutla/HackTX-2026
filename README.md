@@ -95,7 +95,7 @@ TEST_DATABASE_URL=postgresql://.../isolated_test_db pnpm test:integration
 
 The browser suite covers account, voting, privacy, agent settings, interests, chat and the public example on desktop and mobile. Private journeys use controlled API responses; these are UI checks, not proof of live provider delivery. Playwright starts the built app automatically when no local server is running.
 
-The integration test creates a randomly named schema, generates Better Auth tables inside it, and removes that schema afterward. It exercises real Better Auth sessions and real PostgreSQL persistence without contacting a messaging provider. It is skipped unless `TEST_DATABASE_URL` is set. Never point test commands at a production database.
+The integration test creates a randomly named schema, applies the shared application migrations there (including auth and plan tables), and removes that schema afterward. Foreign-key qualifications are remapped to that disposable schema. It exercises real Better Auth sessions and real PostgreSQL persistence without contacting a messaging provider. It is skipped unless `TEST_DATABASE_URL` is set. Never point test commands at a production database.
 
 [Integration handoff and remaining dependencies](docs/APP_ACCOUNTS_HANDOFF.md).
 

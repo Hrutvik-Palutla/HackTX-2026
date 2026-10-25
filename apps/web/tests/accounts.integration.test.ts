@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Pool } from "pg";
-import { getMigrations } from "better-auth/db/migration";
+import { readFileSync } from "node:fs";
 import { createDecipheriv, randomUUID } from "node:crypto";
 import { createAccountAuth } from "../lib/auth/config";
 import {
@@ -107,11 +107,14 @@ test(
       };
     }
     try {
-      // This DDL exists only in the isolated integration database. Shared production migrations belong to Part 2.
-      await (await getMigrations(auth.options)).runMigrations();
-      await pool.query(
-        'CREATE TABLE friendships (user_low_id text NOT NULL REFERENCES "user"(id),user_high_id text NOT NULL REFERENCES "user"(id), requested_by text NOT NULL REFERENCES "user"(id),status text NOT NULL,accepted_at timestamptz,PRIMARY KEY(user_low_id,user_high_id),CHECK(user_low_id<user_high_id)); CREATE TABLE friend_invites (id uuid PRIMARY KEY,inviter_id text NOT NULL REFERENCES "user"(id),recipient_phone_encrypted text NOT NULL,recipient_phone_digest text NOT NULL,token_hash text NOT NULL UNIQUE,state text NOT NULL,expires_at timestamptz NOT NULL,created_at timestamptz NOT NULL);',
-      );
+      // Friend acceptance resumes waiting plans, so exercise the real shared schema,
+      // not a partial auth-only copy. Remap FK qualifications to this disposable schema.
+      const migrations = new URL("../../../packages/db/drizzle/", import.meta.url);
+      const journal = JSON.parse(readFileSync(new URL("meta/_journal.json", migrations), "utf8")) as { entries: { tag: string }[] };
+      for (const entry of journal.entries) {
+        const sql = readFileSync(new URL(`${entry.tag}.sql`, migrations), "utf8");
+        await pool.query(sql.replaceAll('"public".', `"${schema}".`));
+      }
       const jordan = await signup("+15125550101"),
         jamie = await signup("+15125550102"),
         outsider = await signup("+15125550103");

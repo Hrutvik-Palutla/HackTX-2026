@@ -59,7 +59,7 @@ This branch adds nullable `messages.plan_id` and an index through migration `000
 
 `GET /api/plans/:id/chat` returns messages and whether exactly one active Messages group is linked. Existing `GET /messages` keeps its array response. `POST /messages` adds `destination: website | linked_chat`, defaulting to website. Linked sends require group scope, membership and an active server-selected link. Queue dispatch rejects a group that moved to another plan. Sender identity comes from the verified session, never a submitted user ID.
 
-The migration has **not** been applied to production. The readiness endpoint now checks its column. Merge/deployment needs coordinated migration, web/worker rollout and a real consenting group test. There was no external send, live model call, calendar write or production data change during this review.
+The migration has **not** been applied to production. The readiness endpoint now checks its column. Merge/deployment needs coordinated migration, web/worker rollout and a real consenting group test. No live application message, Meta/SerpApi call, calendar write or production data change was performed during this review.
 
 ## MLH tools: Snowflake and SpaceXSI
 
