@@ -95,7 +95,7 @@ Each run cost about $0.013–0.016 (estimated). Discovery is still the labeled F
 - **Part 3:** the webhook stores `inbound_events`, then `enqueue(db, { kind: 'process_inbound', dedupeKey: 'linq:'+eventId, payload: { sendingLine, message: InboundMessage } })`. Register handlers in `apps/worker/src/registry.ts`:
   - `send_outbox`: recipient is group, private or invite. The body is `body`, or `open('outbox', bodyEnc)` for private ones. Private recipients may omit `conversationId`, so resolve by `userId`.
   - `publish_poll`: payload is `{planId, versionId, conversationId, labels}`. Post the poll, then call `registerPoll`.
-  
+
   Poll events go to `applyPollVote` with the voter's current full selection. Calendar busy intervals go in `availability_snapshots`, with no event titles.
 - **Part 4:** implement `DiscoveryPort` and pass it to `runPlanJob`; the worker currently accepts only the labeled `DISCOVERY=fixture`. Candidate `id`s must be stable within a run. Fulfillment tables exist; ask Part 2 for column changes.
 
