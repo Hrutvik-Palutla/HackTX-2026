@@ -96,7 +96,12 @@ export async function bumpRevision(db: Db, planId: string, expectedRevision: num
  * A material change: new revision, plan back to `planning`, fresh repair job. Old version/poll become stale
  * because publishVersion supersedes them and votes require the active version.
  */
-export async function requestRepair(db: Db, planId: string, expectedRevision: number, reason: string, change?: { request?: string; templateId?: 'movie-night' | 'local-outing' }) {
+export async function requestRepair(db: Db, planId: string, expectedRevision: number, reason: string, change?: { request?: string; templateId?: 'movie-night' | 'local-outing'; window?: Interval }) {
+  if (change?.window) {
+    const start = new Date(change.window.startAt);
+    const end = new Date(change.window.endAt);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) throw invalid('A valid planning window with end after start is required');
+  }
   return db.transaction(async (tx) => {
     const [cur] = await tx.select().from(plans).where(eq(plans.id, planId));
     if (!cur) throw notFound();
@@ -110,8 +115,13 @@ export async function requestRepair(db: Db, planId: string, expectedRevision: nu
     if (purchases.some(row => ['handoff_required', 'submitting', 'outcome_unknown', 'merchant_confirmed', 'test_confirmed', 'buyer_reported'].includes((row.payload as { status?: string }).status ?? ''))) {
       throw new AppError('UNRESOLVED', 'The buyer must resolve the existing checkout before the plan can change.');
     }
-    const row = await bumpRevision(tx, planId, expectedRevision, { status: 'planning' });
-    await tx.update(plans).set({ selectedOptionId: null, ...change, updatedAt: new Date() }).where(eq(plans.id, planId));
+    const [row] = await tx.update(plans).set({
+      status: 'planning', selectedOptionId: null, request: change?.request ?? cur.request,
+      templateId: change?.templateId ?? cur.templateId,
+      ...(change?.window ? { windowStart: new Date(change.window.startAt), windowEnd: new Date(change.window.endAt) } : {}),
+      inputRevision: sql`${plans.inputRevision} + 1`, updatedAt: new Date(),
+    }).where(and(eq(plans.id, planId), eq(plans.inputRevision, expectedRevision))).returning();
+    if (!row) throw stale();
     await enqueue(tx, { kind: 'repair', planId, dedupeKey: `repair:${planId}:${row.inputRevision}`, payload: { planId, inputRevision: row.inputRevision, reason } });
     const [updated] = await tx.select().from(plans).where(eq(plans.id, planId));
     return updated!;

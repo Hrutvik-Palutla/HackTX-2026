@@ -1,6 +1,8 @@
 import { isIP } from 'node:net';
 import { createHash } from 'node:crypto';
 import type { Candidate, City, Evidence, Interval, Money, Source } from '../../fulfillment/src/types.ts';
+import { SerpApiResearch } from './research.ts';
+import type { ResearchPort } from '../../contracts/src/index.ts';
 
 type JsonRecord = Record<string, unknown>;
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -367,9 +369,14 @@ export type DiscoveryDiagnostic = {
 export type MovieSearchEvidence = { candidates: Candidate[]; sources: Source[]; diagnostics: DiscoveryDiagnostic[] };
 export class SerpApiDiscovery {
   readonly client: SerpApiClient;
+  readonly research: ResearchPort;
+  private readonly options: DiscoveryOptions;
   private readonly sources = new Map<string, Source>();
   private diagnostics: DiscoveryDiagnostic[] = [];
-  constructor(options: DiscoveryOptions = {}) { this.client = new SerpApiClient(options); }
+  constructor(options: DiscoveryOptions = {}) { this.options = { ...options }; this.client = new SerpApiClient(options); this.research = new SerpApiResearch(this.client); }
+
+  /** A fresh per-run quota scope. Cache reuse is optional; request limits always remain enforced per run. */
+  newSession(): SerpApiDiscovery { return new SerpApiDiscovery(this.options); }
 
   getSources(): Source[] { return [...this.sources.values()].map(source => ({ ...source })); }
   getDiagnostics(): DiscoveryDiagnostic[] { return this.diagnostics.map(diagnostic => ({ ...diagnostic })); }

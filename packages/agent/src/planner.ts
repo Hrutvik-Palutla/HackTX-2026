@@ -2,8 +2,8 @@
 // -> CAS publish -> recipient-scoped messages. The model never decides availability, price, or which venues exist.
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
-import { candidates, conversations, plans, planParticipants, planConversations, sources, type Db } from '@hacktx/db';
-import type { CalendarPort, Candidate, City, DiscoveryPort, Interval, PlanOption } from '@hacktx/contracts';
+import { candidates, conversations, plans, planParticipants, planConversations, sources, user, type Db } from '@hacktx/db';
+import type { CalendarPort, Candidate, City, DiscoveryPort, Interval, PlanOption, ResearchPort, ResearchPageEvidence, ResearchSearchEvidence, Source } from '@hacktx/contracts';
 import {
   AppError, WEB, checkSlot, enqueue, enqueueMessage, postToConversation, tally, loadFactsForFeasibility, loadMemberAvailability, publishVersion, setStatus,
   type OptionDraft, type SlotFit,
@@ -13,6 +13,7 @@ import { planGround } from './standout';
 import type { Muse } from './muse';
 import { LimitError, RunRecorder } from './recorder';
 import { candidateFromMoviePage, movieTimesOnPage } from './movie-showtimes';
+import { runResearch } from './research';
 
 import { refreshPlanAvailability, ensurePlanGroup } from '@hacktx/core';
 
@@ -21,6 +22,7 @@ export type PlannerDeps = {
   db: Db;
   muse: Muse;
   discovery: DiscoveryPort;
+  research?: ResearchPort;
   calendar?: CalendarPort;
   /** Test seam retained for deterministic planner checks. */
   refreshAvailability?: (planId: string, window: Interval) => Promise<unknown>;
@@ -35,7 +37,9 @@ const POLL_REMINDER_MS = 30 * 60_000;
 const Intent = z.object({
   kind: z.enum(['movie', 'outing']),
   movieTitle: z.string().nullable(),
+  movieTitles: z.array(z.string()).default([]),
   searchQuery: z.string(),
+  scheduledEvent: z.boolean().default(false),
   durationMinutes: z.number().int().nullable(),
 });
 
@@ -72,24 +76,35 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
 
     // 1. Interpret the request (public request text only).
     rec.charge('turn');
+    const participantProfiles = await db.select({ interests: user.interests }).from(planParticipants)
+      .innerJoin(user, eq(user.id, planParticipants.userId)).where(eq(planParticipants.planId, plan.id));
+    const interestCounts = new Map<string, number>();
+    for (const profile of participantProfiles) for (const interest of new Set((profile.interests ?? []).map((s) => s.trim()).filter(Boolean))) {
+      const key = interest.toLocaleLowerCase(); interestCounts.set(key, (interestCounts.get(key) ?? 0) + 1);
+    }
+    const sharedInterests = [...interestCounts].filter(([, count]) => count > 1).map(([interest]) => interest).slice(0, 12);
     const { value: intent } = await rec.step('model', 'extract_intent', () => muse.structured({
       name: 'intent',
       schema: Intent,
       messages: [
-        { role: 'system', content: `${template.systemInstruction}\nExtract the search intent. durationMinutes only if the request states it.` },
-        { role: 'user', content: JSON.stringify({ request: plan.request, city: city.label, template: template.id }) },
+        { role: 'system', content: `${template.systemInstruction}\nExtract the search intent. For movie requests, include up to three distinct movie titles the user is considering in movieTitles; movieTitle is the primary title or null. Set scheduledEvent=true when the request depends on a dated event or performance with a source-confirmed start time. Set false for an unscheduled venue or activity visit. durationMinutes only if the request states it.` },
+        { role: 'user', content: JSON.stringify({ request: plan.request, city: city.label, template: template.id, groupInterests: sharedInterests }) },
       ],
     }), (r) => ({ summary: `kind=${r.value.kind}`, usage: r.usage }));
+    const movieTitles = [...new Set([...(intent.movieTitles ?? []), ...(intent.movieTitle ? [intent.movieTitle] : [])].map(t => t.trim()).filter(Boolean))].slice(0, 3);
 
     // 2. Real candidates from Part 4's DiscoveryPort (SerpApi).
     rec.charge('search');
     let movieFallbackSources: import('@hacktx/contracts').Source[] = [];
-    let found = await rec.step('tool', 'discover_candidates', () =>
-      !ground && intent.kind === 'movie' && intent.movieTitle
-        ? deps.discovery.searchMovie({ title: intent.movieTitle, city, window })
+    let found = await rec.step('tool', 'discover_candidates', async () =>
+      intent.kind === 'movie' && movieTitles.length
+        ? (await Promise.all(movieTitles.map(async (title, index) => {
+          if (index) rec.charge('search');
+          return deps.discovery.searchMovie({ title, city, window });
+        }))).flat()
         : deps.discovery.searchOutings({ query: ground?.searchQuery ?? intent.searchQuery, city, window }),
     (r) => ({ summary: `${r.length} candidates`, sourceIds: [...new Set(r.flatMap((c) => c.sourceIds))] }));
-    if (!ground && intent.kind === 'movie' && intent.movieTitle && !found.some(candidate => !!candidate.startAt)) {
+    if (intent.kind === 'movie' && intent.movieTitle && !found.some(candidate => !!candidate.startAt)) {
       const adapter = deps.discovery as DiscoveryPort & {
         searchMovieEvidence?: (input: { title: string; city: City; window: Interval }) => Promise<{ candidates: Candidate[]; sources: import('@hacktx/contracts').Source[] }>;
         getSources?: () => import('@hacktx/contracts').Source[];
@@ -145,7 +160,23 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
       found = recovered.length ? recovered.slice(0, MAX_CANDIDATES) : uncertain.slice(0, 3);
       movieFallbackSources = [...movieFallbackSources, ...extractedSources];
     }
+    let researchSources: (ResearchPageEvidence | ResearchSearchEvidence)[] = [];
+    if (deps.research && (found.length < 3 || (intent.kind === 'movie' && found.some(candidate => !candidate.startAt)) || (intent.scheduledEvent && found.filter(candidate => !!candidate.startAt).length < 3))) {
+      try {
+        const researched = await runResearch({ muse, research: deps.research, recorder: rec, maxSteps: 40,
+          question: `Find up to three distinct source-confirmed ${intent.kind === 'movie' ? `movie screenings for ${movieTitles.join(', ') || plan.request}` : 'dated events'} for this request: ${plan.request}. City: ${city.label} (${city.timeZone}). Date window: ${window.startAt} through ${window.endAt}. Prior candidates: ${found.map(c => c.title).join('; ') || 'none'}. Seek source-confirmed date, start time, title, venue, and price where available; return alternatives.` });
+        researchSources = researched.evidence;
+        const extracted = await extractResearchCandidates({ muse, sources: researchSources, kind: intent.kind, city, window, movieTitles, recorder: rec });
+        const have = new Set(found.map(c => `${c.title.toLocaleLowerCase()}|${c.startAt ?? ''}`));
+        for (const c of extracted) if (!have.has(`${c.title.toLocaleLowerCase()}|${c.startAt ?? ''}`)) found.push(c);
+        found = found.slice(0, MAX_CANDIDATES);
+      } catch (error) {
+        if (error instanceof LimitError) { /* keep already-grounded DiscoveryPort options */ }
+        // Research is an optional enrichment path; retain structured DiscoveryPort results on provider failure.
+      }
+    }
     await persistDiscovery(db, deps.discovery, found);
+    if (researchSources.length) await persistResearchSources(db, researchSources);
     if (movieFallbackSources.length) await persistSourceList(db, movieFallbackSources);
 
     // 3. Deterministic feasibility: availability, window, explicit spending limits.
@@ -164,7 +195,7 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
         if (limit !== null && c.price && c.priceKind !== 'estimated' && c.priceKind !== 'unknown' && c.price.amountMinor > limit) continue;
         if (limit !== null && (!c.price || c.priceKind === 'unknown' || c.priceKind === 'estimated')) notes.push('Price not confirmed yet');
         if (!c.startAt) {
-          if (intent.kind === 'movie') out.push({ c, slot: null, fit: { fit: 'needs_clarification', unknown: [], conflicts: [] }, notes: [...notes, 'Showtime not confirmed; check source page'] });
+          if (intent.kind === 'movie' || intent.scheduledEvent || c.kind === 'event') out.push({ c, slot: null, fit: { fit: 'needs_clarification', unknown: [], conflicts: [] }, notes: [...notes, `${intent.kind === 'movie' ? 'Showtime' : 'Event time'} not confirmed; check source page`] });
           else out.push({ c, slot: null, fit: null, notes });
           continue;
         } // non-movie time may be chosen by Muse, checked below
@@ -255,8 +286,8 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
         let slot = f.slot;
         let fit = f.fit;
         if (!slot) {
-          if (intent.kind === 'movie') {
-            build(f, null, fit ?? { fit: 'needs_clarification', unknown: [], conflicts: [] }, p.publicExplanation || 'The source page lists this theater, but its showtime needs confirmation.', ['Time not confirmed; check source page']);
+          if (intent.kind === 'movie' || intent.scheduledEvent || f.c.kind === 'event') {
+            build(f, null, fit ?? { fit: 'needs_clarification', unknown: [], conflicts: [] }, p.publicExplanation || (intent.kind === 'movie' ? 'The source page lists this theater, but its showtime needs confirmation.' : 'The listing needs a source-confirmed start time.'), [`${intent.kind === 'movie' ? 'Showtime' : 'Event time'} not confirmed; check source page`]);
             continue;
           }
           if (!p.startAt || Number.isNaN(Date.parse(p.startAt))) continue;
@@ -273,7 +304,7 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
         for (const f of feasible.list) {
           if (drafts.length >= 3) break;
           if (used.has(f.c.id) || !f.fit) continue;
-          if (!f.slot && intent.kind !== 'movie') continue;
+          if (!f.slot && intent.kind !== 'movie' && !intent.scheduledEvent && f.c.kind !== 'event') continue;
           build(f, f.slot, f.fit, `${f.c.format ?? f.c.kind.replace('_', ' ')} listed by the source.`, f.slot ? [] : ['Time not confirmed; check source page']);
         }
       }
@@ -297,7 +328,8 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
 
     const versionId = published.version.id;
     await ensurePlanGroup(db, plan.id, plan.inputRevision); // private-request plans get a group chat before the first options
-    await notifyPlan(db, plan.id, `options:${versionId}`, formatOptions(published.options, job.reason, movieFallbackSources), versionId);
+    const researchSourceList = researchSources.map(toResearchSource);
+    await notifyPlan(db, plan.id, `options:${versionId}`, formatOptions(published.options, job.reason, [...movieFallbackSources, ...researchSourceList], intent.kind === 'movie' ? 'movie' : intent.scheduledEvent ? 'event' : 'outing'), versionId);
     // Part 3's publish_poll handler posts a native poll (labels in A,B,C order) per group chat, then calls registerPoll.
     for (const g of (await planGroupConversations(db, plan.id)).filter((c) => c.provider !== WEB)) {
       await enqueue(db, { kind: 'publish_poll', planId: plan.id, dedupeKey: `publish_poll:${versionId}:${g.id}`,
@@ -315,7 +347,7 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
   }
 }
 
-export function formatOptions(options: PlanOption[], repairReason?: string, sourceList: import('@hacktx/contracts').Source[] = []) {
+export function formatOptions(options: PlanOption[], repairReason?: string, sourceList: import('@hacktx/contracts').Source[] = [], unknownKind: 'movie' | 'event' | 'outing' = 'outing') {
   const n = options.length === 1 ? 'is 1 option' : `are ${options.length} options`;
   const head = repairReason ? `Something changed, so here ${n} that fit now:` : `Here ${n}:`;
   const sourceById = new Map(sourceList.map(source => [source.id, source]));
@@ -323,11 +355,11 @@ export function formatOptions(options: PlanOption[], repairReason?: string, sour
     const price = o.estimatedPerPerson ? `$${(o.estimatedPerPerson.amountMinor / 100).toFixed(2)}/person (${o.priceKind})` : 'price unknown';
     const unsure = o.uncertainties.length ? `\n   ⚠ ${o.uncertainties.join('; ')}` : '';
     const sourceLinks = o.startAt ? '' : o.sourceIds.map(id => sourceById.get(id)).filter((source): source is import('@hacktx/contracts').Source => !!source)
-      .map(source => `\n   Check showtimes: ${source.url}`).join('');
-    return `${o.label}) ${o.title}: ${o.startAt ? localTime(o.startAt, o.timeZone) : 'time unknown'}, ${price}\n   ${o.publicExplanation}${unsure}${sourceLinks}`;
+      .map(source => `\n   Check ${unknownKind === 'movie' ? 'showtimes' : 'listing'}: ${source.url}`).join('');
+    return `${o.label}) ${o.title}: ${o.startAt ? localTime(o.startAt, o.timeZone) : 'time unconfirmed'}, ${price}\n   ${o.publicExplanation}${unsure}${sourceLinks}`;
   }).join('\n');
   const unknownTimes = options.some(option => !option.startAt);
-  const prompt = unknownTimes ? '\nWhich theater and time window should I check for the group?' : '';
+  const prompt = unknownTimes ? unknownKind === 'movie' ? '\nWhich theater and time window should I check for the group?' : '\nWhich listing or time window should I check for the group?' : '';
   return `${head}\n${body}\nVote in the poll for every option that works for you, and reply "favorite B" (etc.) for your top pick.${prompt}`;
 }
 
@@ -379,4 +411,85 @@ async function persistDiscovery(db: Db, discovery: DiscoveryPort, found: Candida
 
 async function persistSourceList(db: Db, found: import('@hacktx/contracts').Source[]) {
   for (const source of found) await db.insert(sources).values({ ...source, fetchedAt: new Date(source.fetchedAt) }).onConflictDoNothing();
+}
+async function persistResearchSources(db: Db, found: (ResearchPageEvidence | ResearchSearchEvidence)[]) {
+  for (const source of found) await db.insert(sources).values({ ...toResearchSource(source), fetchedAt: new Date(source.fetchedAt) }).onConflictDoNothing();
+}
+function toResearchSource(source: ResearchPageEvidence | ResearchSearchEvidence): Source {
+  const provider = 'engine' in source ? `serpapi_${source.engine}` : 'serpapi_extract';
+  const title = 'title' in source ? source.title : `${source.engine} search: ${source.query}`;
+  return { id: source.sourceId, url: source.url, title: title || source.url, fetchedAt: source.fetchedAt, provider, providerSearchId: null };
+}
+
+const ResearchCandidates = z.object({ candidates: z.array(z.object({
+  sourceId: z.string(), kind: z.enum(['movie_screening', 'event']), title: z.string(), titleQuote: z.string(),
+  venue: z.string(), venueQuote: z.string(), date: z.string().nullable(), dateQuote: z.string().nullable(),
+  time: z.string().nullable(), timeQuote: z.string().nullable(), timeZone: z.string(),
+  priceText: z.string().nullable(), priceQuote: z.string().nullable(),
+})) });
+
+/** Extract only scheduled listings whose title, venue and local date/time are each backed by exact source excerpts. */
+async function extractResearchCandidates(input: { muse: Muse; sources: (ResearchPageEvidence | ResearchSearchEvidence)[]; kind: 'movie' | 'outing'; city: City; window: Interval; movieTitles: string[]; recorder: RunRecorder }): Promise<Candidate[]> {
+  if (!input.sources.length) return [];
+  const pages = input.sources.map(s => ({ sourceId: s.sourceId, url: s.url, fetchedAt: s.fetchedAt, text: s.text.slice(0, 12_000) }));
+  input.recorder.charge('turn');
+  const response = await input.recorder.step('model', 'extract_research_candidates', () => input.muse.structured({
+    name: 'research_candidates', schema: ResearchCandidates,
+    messages: [
+      { role: 'system', content: `Extract at most three distinct ${input.kind === 'movie' ? 'movie screenings' : 'scheduled public events'} from supplied public source text. Include only listings with a source-confirmed local date and start time. Never infer an event from venue hours. Each titleQuote, venueQuote, dateQuote, timeQuote, and optional priceQuote must be verbatim contiguous text from the named source, and must directly establish its field. Use YYYY-MM-DD for date and 24-hour HH:mm for time. Use the city's IANA time zone. Return no candidate if a required quote or field is missing. Do not fabricate facts.` },
+      { role: 'user', content: JSON.stringify({ city: input.city.label, timeZone: input.city.timeZone, window: input.window, requestedMovieTitles: input.movieTitles, sources: pages }) },
+    ],
+  }), r => ({ summary: `${r.value.candidates.length} extracted listings`, usage: r.usage, sourceIds: pages.map(p => p.sourceId) }));
+  const byId = new Map(input.sources.map(s => [s.sourceId, s]));
+  const output: Candidate[] = [];
+  for (const row of response.value.candidates) {
+    const source = byId.get(row.sourceId);
+    if (!source || row.timeZone !== input.city.timeZone || !row.title.trim() || !row.venue.trim() || !row.titleQuote.includes(row.title) || !row.venueQuote.includes(row.venue)
+      || !source.text.includes(row.titleQuote) || !source.text.includes(row.venueQuote)) continue;
+    if (!row.date || !row.dateQuote || !row.time || !row.timeQuote || !source.text.includes(row.dateQuote) || !source.text.includes(row.timeQuote)) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date) || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(row.time) || !dateQuoteMatches(row.dateQuote, row.date) || !timeQuoteMatches(row.timeQuote, row.time)) continue;
+    if (row.kind === 'movie_screening' && input.kind !== 'movie') continue;
+    if (row.kind === 'event' && input.kind === 'movie') continue;
+    if (input.movieTitles.length && row.kind === 'movie_screening' && !input.movieTitles.some(t => row.title.toLocaleLowerCase().includes(t.toLocaleLowerCase()))) continue;
+    let startAt: string;
+    const quotePositions = [row.titleQuote, row.venueQuote, row.dateQuote, row.timeQuote].map(q => source.text.indexOf(q));
+    if (quotePositions.some(pos => pos < 0) || Math.max(...quotePositions) - Math.min(...quotePositions) > 1800) continue;
+    try { startAt = localDateTimeToUtc(row.date, row.time, row.timeZone); } catch { continue; }
+    if (Date.parse(startAt) < Date.parse(input.window.startAt) || Date.parse(startAt) >= Date.parse(input.window.endAt)) continue;
+    const hasPrice = !!row.priceText && !!row.priceQuote && source.text.includes(row.priceQuote) && row.priceQuote.includes(row.priceText);
+    output.push({
+      id: `research_${source.sourceId}_${output.length}`, kind: row.kind, title: row.title.slice(0, 160), venueName: row.venue.slice(0, 120), address: null,
+      timeZone: row.timeZone, startAt, durationMinutes: null, format: null, price: null, rawPriceText: hasPrice ? row.priceText : null,
+      rawCurrency: null, priceKind: hasPrice ? 'listed' : 'unknown', bookingUrl: source.url, sourceIds: [source.sourceId],
+      evidence: [{ field: 'title', origin: 'source', sourceId: source.sourceId, sourceMessageId: null }, { field: 'startAt', origin: 'source', sourceId: source.sourceId, sourceMessageId: null }, ...(hasPrice ? [{ field: 'price', origin: 'source' as const, sourceId: source.sourceId, sourceMessageId: null }] : [])],
+    });
+  }
+  return output;
+}
+
+function dateQuoteMatches(quote: string, expected: string) {
+  if (quote.includes(expected)) return true;
+  const parsed = Date.parse(quote);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === expected;
+}
+function timeQuoteMatches(quote: string, expected: string) {
+  const m = quote.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i) ?? quote.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  if (!m) return quote.includes(expected);
+  let h = Number(m[1]); const min = Number(m[2] ?? '0');
+  if (m[3]) { if (h < 1 || h > 12) return false; h = (h % 12) + (m[3].toLowerCase() === 'pm' ? 12 : 0); }
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}` === expected;
+}
+function localDateTimeToUtc(date: string, time: string, zone: string) {
+  const [year, month, day] = date.split('-').map(Number); const [hour, minute] = time.split(':').map(Number);
+  const wanted = Date.UTC(year!, month! - 1, day!, hour!, minute!);
+  let guess = wanted;
+  for (let i = 0; i < 3; i++) {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(guess));
+    const get = (type: string) => Number(parts.find(p => p.type === type)?.value);
+    const represented = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'));
+    guess += wanted - represented;
+  }
+  const verified = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(guess));
+  if (verified !== `${date}, ${time}`) throw new Error('local event time is invalid in the requested time zone');
+  return new Date(guess).toISOString();
 }

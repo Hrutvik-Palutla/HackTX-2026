@@ -4,9 +4,11 @@
 // SERPAPI_API_KEY is set, otherwise FIXTURE-labeled data) + Part 3's send/poll handlers, on an in-memory database.
 // Team accounts come from `.env.team.json` (git-ignored by the `.env.*` rule), all mutually connected friends:
 //   [{ "name": "Sid", "phone": "+15125550100" }, { "name": "Mark", "phone": "+15125550101" }]
-// State resets when the script stops. Not used by the deployed app.
+// Local state persists across restarts in .sidequest/live-db (override LIVE_AGENT_DB_PATH).
+// Not used by the deployed app. Stop this harness before testing the production phone line.
 import { randomBytes, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
@@ -32,15 +34,18 @@ const team = JSON.parse(readFileSync('.env.team.json', 'utf8')) as { name: strin
 const austin = { label: 'Austin, Texas, United States', countryCode: 'US', latitude: 30.27, longitude: -97.74, timeZone: 'America/Chicago' };
 
 process.env.APP_ENCRYPTION_KEY ??= randomBytes(32).toString('base64');
-const db = drizzle(new PGlite(), { schema }) as unknown as Db;
+const liveDbPath = process.env.LIVE_AGENT_DB_PATH ?? '.sidequest/live-db';
+mkdirSync(dirname(liveDbPath), { recursive: true, mode: 0o700 });
+const localDb = new PGlite(liveDbPath);
+const db = drizzle(localDb, { schema }) as unknown as Db;
 await migrate(db as never, { migrationsFolder });
 const ids = team.map((t) => ({ ...t, id: `u_${t.name.toLowerCase().replace(/\W+/g, '_')}` }));
 for (const t of ids) {
-  await db.insert(user).values({ id: t.id, name: t.name, email: `${t.id}@users.invalid`, city: JSON.stringify(austin), emailVerified: false, phoneNumber: t.phone, phoneNumberVerified: true, onboardingComplete: true });
+  await db.insert(user).values({ id: t.id, name: t.name, email: `${t.id}@users.invalid`, city: JSON.stringify(austin), emailVerified: false, phoneNumber: t.phone, phoneNumberVerified: true, onboardingComplete: true }).onConflictDoNothing();
   await linkVerifiedPhone(db, t.id, t.phone);
 }
 for (const a of ids) for (const b of ids) {
-  if (a.id < b.id) await db.insert(friendships).values({ userLow: a.id, userHigh: b.id, requestedBy: a.id, status: 'accepted', acceptedAt: new Date() });
+  if (a.id < b.id) await db.insert(friendships).values({ userLow: a.id, userHigh: b.id, requestedBy: a.id, status: 'accepted', acceptedAt: new Date() }).onConflictDoNothing();
 }
 console.log(`[live] ${ids.length} connected accounts: ${ids.map((t) => `${t.name} (…${t.phone.slice(-4)})`).join(', ')}`);
 
@@ -98,9 +103,11 @@ const fulfillment = fulfillmentJobHandlers(p4.createFulfillmentJobHandlers(servi
 const handlers = agentHandlers({ fulfillment, db, muse, discovery, calendar, client: claw.client, sendingLine: process.env.CLAW_MESSENGER_FROM_PHONE! });
 let stopping = false;
 process.on('SIGINT', () => { stopping = true; });
+console.log(`[live] revision=${process.env.SOURCE_REVISION ?? 'local'} persistent state enabled; do not run alongside the production worker on the same phone line.`);
 console.log('[live] agent running; text it or message a group it is in. Ctrl+C to stop.');
 while (!stopping) {
   if (!(await runOne(db, handlers))) await new Promise((r) => setTimeout(r, 500));
 }
 await claw.stop();
+await localDb.close();
 process.exit(0);

@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { and, eq, inArray, or } from 'drizzle-orm';
-import { conversationMembers, conversations, friendships, messages, messagingIdentities, planConversations, planOptions, planParticipants, plans, user, type Db } from '@hacktx/db';
+import { conversationMembers, conversations, friendships, messages, messagingIdentities, planConversations, planOptions, planParticipants, plans, sources, user, type Db } from '@hacktx/db';
 import { City, type ActorContext } from '@hacktx/contracts';
 import {
   AppError, activeTally, assertMember, createPlan, enqueue, enqueueMessage, parseCity, open, publicPlan,
@@ -11,6 +11,10 @@ import {
   inviteByPhone, normalizePhone, pendingRequestsFor, respondToFriendRequest,
 } from '@hacktx/core';
 import type { ToolSpec } from './muse';
+import type { ResearchPort } from '@hacktx/contracts';
+import type { Muse } from './muse';
+import { runResearch } from './research';
+import type { RunRecorder } from './recorder';
 import {
   NOT_SET_UP, afterBooking, bookingLabel, cancelHandoff, fulfillmentError, fulfillmentService, moveStatus, readSelection, sendHandoff, setBuyer,
   type FulfillmentAuthorization, type FulfillmentBooking, type SelectionState, type FulfillmentPort, type FulfillmentQuote, type FulfillmentReimbursement,
@@ -24,12 +28,17 @@ export type ToolCtx = {
   messageId: string; // internal messages.id of the triggering message
   providerMessageId: string;
   availablePlanIds?: string[];
+  research?: ResearchPort;
+  muse?: Muse;
+  recorder?: RunRecorder;
+  researchRedactions?: string[];
 };
 
 type Tool<A> = { name: string; description: string; args: z.ZodType<A>; run(ctx: ToolCtx, args: A): Promise<unknown> };
 const tool = <A>(t: Tool<A>) => t as Tool<unknown>;
 
 const isoUtc = z.string().refine((s) => !Number.isNaN(Date.parse(s)), 'ISO 8601 time with offset').transform((s) => new Date(s).toISOString());
+const zonedIsoUtc = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/, 'ISO 8601 timestamp with UTC offset').refine((s) => !Number.isNaN(Date.parse(s)), 'Valid ISO 8601 timestamp').transform((s) => new Date(s).toISOString());
 const Iv = z.object({ startAt: isoUtc, endAt: isoUtc });
 const Label = z.enum(['A', 'B', 'C']);
 
@@ -100,6 +109,22 @@ async function assertSuppliedPhone(ctx: ToolCtx, phone: string) {
 }
 
 export const TOOLS = [
+  tool({
+    name: 'research_public',
+    description: 'Search the web and read public pages, including JavaScript pages, to answer factual questions about movies, events, performers, dates, prices or venues. Use proactively when details are missing. Send only a public activity question: never names, phone numbers, private schedules, preferences or budgets. Does not change the plan or book anything. Returns sources and fetched times.',
+    args: z.object({ question: z.string().min(3).max(1200) }),
+    async run(ctx, args) {
+      if (!ctx.research || !ctx.muse) return { error: 'UNAVAILABLE', message: 'Public research is not configured. Do not claim to have searched.' };
+      const result = await runResearch({ muse: ctx.muse, research: ctx.research, question: args.question,
+        redactions: ctx.researchRedactions, maxSteps: 48, recorder: ctx.recorder });
+      for (const item of result.evidence) {
+        const provider = 'engine' in item ? `serpapi_${item.engine}` : 'serpapi_extract';
+        await ctx.db.insert(sources).values({ id: item.sourceId, url: item.url, title: 'Public research source',
+          fetchedAt: new Date(item.fetchedAt), provider, providerSearchId: null }).onConflictDoNothing();
+      }
+      return result;
+    },
+  }),
   tool({
     name: 'select_plan', description: 'Choose the plan explicitly identified by the sender from context.openPlans in a private chat.',
     args: z.object({ planId: z.string() }),
@@ -265,8 +290,8 @@ export const TOOLS = [
   }),
   tool({
     name: 'request_replan',
-    description: 'Ask for revised options because a constraint, time, or activity materially changed. Include the full updated activity request in newRequest when changing the activity; kind changes its planning template. Old votes become stale.',
-    args: z.object({ reason: z.string().max(200), newRequest: z.string().trim().min(3).max(500).nullable().default(null), kind: z.enum(['movie-night', 'local-outing']).nullable().default(null) }),
+    description: 'Ask for revised options because a constraint, time, or activity materially changed. When changing the activity, provide the full updated request in newRequest, preserving every alternative and relevant location details. If the requested date or time window changed, provide both windowStart and windowEnd as ISO 8601 timestamps with offsets; these are the actual inclusive-start/exclusive-end planning bounds. Omit both only when keeping the current window unchanged. kind changes the planning template. Old votes become stale.',
+    args: z.object({ reason: z.string().max(200), newRequest: z.string().trim().min(3).max(500).nullable().default(null), kind: z.enum(['movie-night', 'local-outing']).nullable().default(null), windowStart: zonedIsoUtc.nullable().default(null), windowEnd: zonedIsoUtc.nullable().default(null) }).refine(a => (a.windowStart === null) === (a.windowEnd === null), 'Provide both windowStart and windowEnd or neither').refine(a => !a.windowStart || Date.parse(a.windowEnd!) > Date.parse(a.windowStart), 'windowEnd must be after windowStart'),
     async run(ctx, a) {
       const planId = needPlan(ctx);
       const plan = await assertMember(ctx.db, planId, ctx.actor.userId);
@@ -276,8 +301,10 @@ export const TOOLS = [
       }
       // A reason written in a private chat may contain private details; the planner sees only a generic one.
       const reason = ctx.conversation.kind === 'group' ? a.reason : "a participant's constraints changed";
-      await requestRepair(ctx.db, planId, plan.inputRevision, reason, changesActivity ? {
+      const changesWindow = a.windowStart !== null && a.windowEnd !== null;
+      await requestRepair(ctx.db, planId, plan.inputRevision, reason, changesActivity || changesWindow ? {
         ...(a.newRequest !== null ? { request: a.newRequest } : {}), ...(a.kind !== null ? { templateId: a.kind } : {}),
+        ...(changesWindow ? { window: { startAt: a.windowStart!, endAt: a.windowEnd! } } : {}),
       } : undefined);
       return { replanning: true };
     },

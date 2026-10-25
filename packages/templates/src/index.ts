@@ -11,6 +11,7 @@ const CONVERSATION_TOOLS = [
   // booking & payment (Part 4 via the agent's fulfillment bridge)
   'confirm_buyer', 'get_quote', 'request_payment_approval', 'book', 'checkout_handoff', 'report_booked',
   'booking_status', 'record_repayment', 'request_booking_change', 'cancel_handoff',
+  'research_public',
 ];
 
 const model = process.env.MUSE_MODEL ?? 'muse-spark-1.3';
@@ -27,25 +28,25 @@ Rules you must follow:
 export const templates = {
   'movie-night': AgentTemplate.parse({
     id: 'movie-night',
-    version: 1,
+    version: 2,
     model,
     systemInstruction: `${SHARED}
 The group wants to see a specific movie. Keep the movie fixed unless the group explicitly changes it.
 Make the three options differ usefully by theater, time, format, and price where real data allows.`,
     allowedTools: CONVERSATION_TOOLS,
-    limits: { maxTurns: 6, maxTools: 12, maxSearches: 4 },
+    limits: { maxTurns: 52, maxTools: 100, maxSearches: 80 },
     outputSchemaVersion: 1,
   }),
   'local-outing': AgentTemplate.parse({
     id: 'local-outing',
-    version: 1,
+    version: 2,
     model,
     systemInstruction: `${SHARED}
 The group has a broad idea (e.g. "something this weekend"). Offer three distinct real outings that fit the
 group's city, shared interests, and time window: roughly a cheaper, a balanced, and a more premium choice when
 real prices allow, but timing and experience differences can matter more than price.`,
     allowedTools: CONVERSATION_TOOLS,
-    limits: { maxTurns: 8, maxTools: 16, maxSearches: 8 },
+    limits: { maxTurns: 52, maxTools: 100, maxSearches: 80 },
     outputSchemaVersion: 1,
   }),
   'drop-extraction': AgentTemplate.parse({
@@ -74,14 +75,16 @@ export const getTemplate = (id: string): AgentTemplate => {
 
 export async function loadTemplate(db: Db, id: string): Promise<AgentTemplate> {
   const [row] = await db.select().from(agentTemplates).where(eq(agentTemplates.id, id)).orderBy(desc(agentTemplates.version)).limit(1);
-  return row ? AgentTemplate.parse(row.config) : getTemplate(id);
+  // Built-in capability upgrades supersede older saved templates; same/newer Studio edits still win.
+  const base = getTemplate(id);
+  return row && row.version >= base.version ? AgentTemplate.parse(row.config) : base;
 }
 
 export async function saveTemplate(db: Db, id: string, expectedVersion: number, patch: Pick<AgentTemplate, 'systemInstruction' | 'allowedTools' | 'limits'>) {
   const current = await loadTemplate(db, id);
   if (current.version !== expectedVersion) throw new Error('STALE_TEMPLATE');
   const base = getTemplate(id);
-  if (!patch.systemInstruction.trim() || patch.systemInstruction.length > 12000 || patch.allowedTools.some(t => !base.allowedTools.includes(t)) || patch.limits.maxTurns > 12 || patch.limits.maxTools > 24 || patch.limits.maxSearches > 8) throw new Error('INVALID_TEMPLATE');
+  if (!patch.systemInstruction.trim() || patch.systemInstruction.length > 12000 || patch.allowedTools.some(t => !base.allowedTools.includes(t)) || patch.limits.maxTurns > 52 || patch.limits.maxTools > 100 || patch.limits.maxSearches > 80) throw new Error('INVALID_TEMPLATE');
   const next = AgentTemplate.parse({ ...current, ...patch, version: current.version + 1 });
   const rows = await db.insert(agentTemplates).values({ id, version: next.version, config: next }).onConflictDoNothing().returning();
   if (!rows.length) throw new Error('STALE_TEMPLATE');
