@@ -370,20 +370,26 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
   }
 }
 
+/** Scraped page titles ("Extracted page: www.fandango.com", "... - Showtimes & tickets") read badly in a text thread. */
+export function tidyTitle(title: string) {
+  return title.replace(/Extracted page:\s*/i, '').replace(/\s*[-–|]\s*(showtimes|tickets)\b.*$/i, '')
+    .replace(/\s+in\s+[A-Z][\w .'-]+,\s*[A-Z]{2}$/, '').replace(/\s{2,}/g, ' ').trim();
+}
+
+/** Short iMessage-style summary: one line per option, then at most two links and one question. The sender splits links into their own bubbles. */
 export function formatOptions(options: PlanOption[], repairReason?: string, sourceList: import('@hacktx/contracts').Source[] = [], unknownKind: 'movie' | 'event' | 'outing' = 'outing') {
-  const n = options.length === 1 ? 'is 1 option' : `are ${options.length} options`;
-  const head = repairReason ? `Something changed, so here ${n} that fit now:` : `Here ${n}:`;
+  const head = repairReason ? 'Updated:' : options.length === 1 ? 'Best fit so far:' : 'Here’s what I found:';
   const sourceById = new Map(sourceList.map(source => [source.id, source]));
-  const body = options.map((o) => {
-    const price = o.estimatedPerPerson ? `$${(o.estimatedPerPerson.amountMinor / 100).toFixed(2)}/person (${o.priceKind})` : 'price unknown';
-    const unsure = o.uncertainties.length ? `\n   ⚠ ${o.uncertainties.join('; ')}` : '';
-    const sourceLinks = o.startAt ? '' : o.sourceIds.map(id => sourceById.get(id)).filter((source): source is import('@hacktx/contracts').Source => !!source)
-      .map(source => `\n   Check ${unknownKind === 'movie' ? 'showtimes' : 'listing'}: ${source.url}`).join('');
-    return `${o.label}) ${o.title}: ${o.startAt ? localTime(o.startAt, o.timeZone) : 'time unconfirmed'}, ${price}\n   ${o.publicExplanation}${unsure}${sourceLinks}`;
-  }).join('\n');
+  const lines = options.map((o) => {
+    const price = o.estimatedPerPerson ? `, $${(o.estimatedPerPerson.amountMinor / 100).toFixed(0)}/person` : '';
+    return `${o.label}) ${tidyTitle(o.title)}, ${o.startAt ? localTime(o.startAt, o.timeZone) : 'time to confirm'}${price}`;
+  });
   const unknownTimes = options.some(option => !option.startAt);
-  const prompt = unknownTimes ? unknownKind === 'movie' ? '\nWhich theater and time window should I check for the group?' : '\nWhich listing or time window should I check for the group?' : '';
-  return `${head}\n${body}\nVote in the poll for every option that works for you, and reply "favorite B" (etc.) for your top pick.${prompt}`;
+  const links = unknownTimes ? options.filter(o => !o.startAt).flatMap(o => o.sourceIds.slice(0, 1).map(id => sourceById.get(id)?.url).filter((u): u is string => !!u))
+    .filter((u, i, all) => all.indexOf(u) === i).slice(0, 2) : [];
+  const note = unknownTimes ? `\n\nI can’t see a confirmed ${unknownKind === 'movie' ? 'showtime' : 'start time'} yet.` : '';
+  const prompt = unknownTimes ? `\n\nWhat time works best for you? I’ll check ${unknownKind === 'movie' ? 'that showtime' : 'it'}.` : '';
+  return `${head}\n${lines.join('\n')}${note}${prompt}${links.length ? `\n\n${links.join('\n')}` : ''}`;
 }
 
 /** Send the same public text to the plan's group chat, or privately to each participant in DM-fallback mode. */
@@ -408,7 +414,7 @@ export async function runPollReminder(db: Db, job: { planId: string; versionId: 
   const t = await tally(db, job.versionId);
   const people = (await db.select({ userId: planParticipants.userId }).from(planParticipants).where(eq(planParticipants.planId, plan.id))).filter((p) => p.userId);
   if (t.voters >= people.length) return { sent: false };
-  await notifyPlan(db, plan.id, `reminder:${job.versionId}`, `Quick nudge: ${people.length - t.voters} of ${people.length} still need to vote on the options above. No rush, nothing gets booked without the group.`);
+  await notifyPlan(db, plan.id, `reminder:${job.versionId}`, `Still waiting on ${people.length - t.voters} of ${people.length} votes. Nothing gets booked without everyone.`);
   return { sent: true };
 }
 

@@ -13,6 +13,7 @@ import { AGENT_HANDLE, AppError, configurePlanGroupCreator, enqueue, open, postT
 import { OutboundRecipient, type InboundMessage, type MessagingPort } from '@hacktx/contracts';
 import { ClawMessengerClient, type ClawInboundMessage, type SendTarget } from './claw-messenger.ts';
 import { maybeGreetStranger } from './stranger.ts';
+import { toBubbles } from './bubbles.ts';
 
 export const CLAW_PROVIDER = 'claw_messenger' as const;
 
@@ -179,39 +180,53 @@ export function createSendOutboxHandler(client: Sender): Handler {
 
     const target = await resolveTarget(db, recipient);
     const text = row.body ?? open('outbox', row.bodyEnc!);
+    const bubbles = toBubbles(text);
+    if (!bubbles.length) { await setEffect(db, effect.id, 'failed'); await setOutbox(db, row.id, 'failed'); return; }
     await setEffect(db, effect.id, 'inflight');
-    let res;
-    try {
-      res = await client.send(target, text, { id: row.id });
-    } catch (e) {
-      await setEffect(db, effect.id, 'unknown');
-      await setOutbox(db, row.id, 'unknown');
-      throw new AppError('PROVIDER', `send ${row.effectKey}: delivery uncertain; not resending`);
+    // One outbox row can be several iMessage bubbles. Once any bubble is out, an uncertain result is never resent.
+    let res: Awaited<ReturnType<Sender['send']>> | undefined;
+    let sent = 0;
+    for (const [i, bubble] of bubbles.entries()) {
+      try {
+        res = await client.send(target, bubble, { id: i === 0 ? row.id : `${row.id}:${i}` });
+      } catch (e) {
+        await setEffect(db, effect.id, 'unknown');
+        await setOutbox(db, row.id, 'unknown');
+        throw new AppError('PROVIDER', `send ${row.effectKey}: delivery uncertain; not resending`);
+      }
+      if (res.status === 'not_confirmed') {
+        await setEffect(db, effect.id, 'unknown');
+        await setOutbox(db, row.id, 'unknown');
+        throw new AppError('PROVIDER', 'Message delivery is uncertain; not resending.');
+      }
+      if (!(res.ok && res.status === 'accepted')) break;
+      sent++;
     }
-    if (res.status === 'not_confirmed') {
-      await setEffect(db, effect.id, 'unknown');
-      await setOutbox(db, row.id, 'unknown');
-      throw new AppError('PROVIDER', 'Message delivery is uncertain; not resending.');
-    }
-    if (res.ok && res.status === 'accepted') {
+    if (res && sent === bubbles.length) {
       await setEffect(db, effect.id, 'confirmed', res.messageId);
       await setOutbox(db, row.id, 'sent', res.messageId);
       return;
     }
-    if (res.retryable) {
+    if (sent > 0) { // some bubbles delivered, a later one was refused: do not send the earlier ones again
+      await setEffect(db, effect.id, 'unknown');
+      await setOutbox(db, row.id, 'unknown');
+      throw new AppError('PROVIDER', `send ${row.effectKey}: only ${sent} of ${bubbles.length} messages delivered; not resending`);
+    }
+    if (res?.retryable) {
       await setEffect(db, effect.id, 'reserved'); // provider said it did not send; safe to try again
       throw new AppError('PROVIDER', `send ${row.effectKey} rejected (${res.errorCode ?? res.status}); will retry`, true);
     }
     await setEffect(db, effect.id, 'failed');
     await setOutbox(db, row.id, 'failed');
-    throw new AppError('PROVIDER', `send ${row.effectKey} failed: ${res.errorCode ?? res.status}`);
+    throw new AppError('PROVIDER', `send ${row.effectKey} failed: ${res?.errorCode ?? res?.status}`);
   };
 }
 
 /** The options are posted right above, so the poll only names the letters. */
 export function formatTextPoll(labels: string[]) {
-  const letters = labels.map((l) => l.split(')')[0]!.trim()).join(', ');
-  return `🗳 Vote: reply with every option that works for you (${letters}), plus "favorite" for your top pick, e.g. "A C, favorite C". Reply "none" if nothing works.`;
+  const letters = labels.map((l) => l.split(')')[0]!.trim());
+  const pick = letters.length === 1 ? `Reply ${letters[0]} if that works for you, or "no" if it doesn't.` : `Reply with the ones that work for you, like "${letters[0]}" or "${letters.slice(0, 2).join(' ')}". Add "favorite ${letters[0]}" for your top pick, or say "none".`;
+  return pick;
 }
 
 /**

@@ -94,6 +94,36 @@ describe('send_outbox', () => {
     expect(eff!.state).toBe('confirmed');
   });
 
+  it('sends the answer and its link as separate bubbles, in order, once', async () => {
+    const conv = await clawGroup();
+    await enqueueMessage(db, { recipient: { kind: 'group', conversationId: conv.id }, text: '**Clayface** is at 7:00 PM tonight.\nCheck showtimes: https://theater.example/tech-ridge', effectKey: 'k-bubbles' });
+    const client = new FakeClient();
+    const send = createSendOutboxHandler(client);
+    const job = await jobFor('send_outbox');
+    await send({ db, job });
+    await send({ db, job });
+    expect(client.sent.map((m) => m.text)).toEqual(['Clayface is at 7:00 PM tonight.', 'https://theater.example/tech-ridge']);
+    expect(client.sent.every((m) => m.target.chatId === 'chat-g')).toBe(true);
+    expect((await db.select().from(outbox))[0]).toMatchObject({ status: 'sent' });
+  });
+
+  it('does not resend delivered bubbles when a later bubble is refused', async () => {
+    const conv = await clawGroup();
+    await enqueueMessage(db, { recipient: { kind: 'group', conversationId: conv.id }, text: 'Listing shows 7pm.\nhttps://theater.example/a', effectKey: 'k-partial' });
+    const client = new FakeClient();
+    const original = client.send.bind(client);
+    client.send = async (target, text, opts) => {
+      const res = await original(target, text, opts);
+      return client.sent.length === 2 ? { ...res, ok: false, status: 'rejected' as never, retryable: false } : res;
+    };
+    const send = createSendOutboxHandler(client);
+    const job = await jobFor('send_outbox');
+    await expect(send({ db, job })).rejects.toMatchObject({ code: 'PROVIDER', retryable: false });
+    await send({ db, job });
+    expect(client.sent).toHaveLength(2);
+    expect((await db.select().from(outbox))[0]!.status).toBe('unknown');
+  });
+
   it('sends private messages to the verified handle, decrypting the body', async () => {
     await db.insert(messagingIdentities).values({ userId: 'u_alex', provider: CLAW_PROVIDER, handle: '+15125550199', kind: 'phone', verifiedAt: new Date() });
     await enqueueMessage(db, { recipient: { kind: 'private', userId: 'u_alex' }, text: 'When does your appointment end?', effectKey: 'k2' });
