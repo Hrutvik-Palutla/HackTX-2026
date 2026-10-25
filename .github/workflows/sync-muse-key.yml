@@ -1,8 +1,9 @@
 name: Sync production Muse key
 
-# Manual and CI-free: compares the current and candidate keys from inside the running worker,
-# installs only MODEL_API_KEY (the installer keeps a timestamped .env.production backup),
-# recreates the current release's containers without rebuilding, then re-probes.
+# Manual and CI-free. From inside the running worker, compares Meta directly against the relay in
+# SIDEQUEST_MUSE_BASE_URL (when set), installs only MODEL_API_KEY and MUSE_BASE_URL (the installer keeps a
+# timestamped .env.production backup), recreates the current release's containers without rebuilding,
+# then re-probes through the installed settings.
 on:
   workflow_dispatch:
 
@@ -30,32 +31,44 @@ jobs:
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/key"
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           echo "SSH_CMD=ssh -i $RUNNER_TEMP/key -o BatchMode=yes -o StrictHostKeyChecking=yes root@$DEPLOY_HOST" >> "$GITHUB_ENV"
-      - name: Compare current and candidate keys from the worker
+          # Probe used before and after install: catalog + 6 completions (3 with tools) per base URL.
+          cat > "$RUNNER_TEMP/probe.mjs" <<'EOF'
+          let input = ''; for await (const c of process.stdin) input += c;
+          const { key, bases } = JSON.parse(input);
+          const model = process.env.MUSE_MODEL ?? 'muse-spark-1.3';
+          const tools = [{ type: 'function', function: { name: 'read_plan', description: 'Read the plan.', parameters: { type: 'object', properties: {}, additionalProperties: false } } }];
+          for (const [label, given] of bases) {
+            // An empty base means "whatever this container is configured with".
+            const base = given || (process.env.MUSE_BASE_URL?.trim() || 'https://api.meta.ai/v1').replace(/\/+$/, '');
+            const headers = { Authorization: `Bearer ${key || process.env.MODEL_API_KEY}`, 'Content-Type': 'application/json' };
+            let catalog;
+            try { const r = await fetch(`${base}/models`, { headers }); catalog = r.ok ? (await r.json()).data?.map(m => m.id) : `HTTP ${r.status}`; } catch (e) { catalog = e.message; }
+            const codes = [];
+            for (let i = 0; i < 6; i++) {
+              const extra = i % 2 ? { tools, tool_choice: 'auto', parallel_tool_calls: false } : {};
+              try { codes.push((await fetch(`${base}/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply OK. Do not call tools.' }], ...extra }) })).status); }
+              catch (e) { codes.push(e.message); }
+            }
+            console.log(JSON.stringify({ via: label, hasModel: Array.isArray(catalog) ? catalog.includes(model) : false, catalog, completions: codes }));
+          }
+          EOF
+      - name: Compare direct and relay from the worker
         env:
-          CANDIDATE: ${{ secrets.SIDEQUEST_MODEL_API_KEY }}
+          CANDIDATE_KEY: ${{ secrets.SIDEQUEST_MODEL_API_KEY }}
+          RELAY_BASE: ${{ secrets.SIDEQUEST_MUSE_BASE_URL }}
         run: |
-          # The candidate key travels on stdin, never on a command line.
-          printf '%s' "$CANDIDATE" | $SSH_CMD "docker exec -i sidequest-worker-1 node --input-type=module -e '
-            import { createHash } from \"node:crypto\";
-            let candidate = \"\"; for await (const c of process.stdin) candidate += c;
-            const model = process.env.MUSE_MODEL ?? \"muse-spark-1.3\";
-            for (const [name, key] of [[\"current\", process.env.MODEL_API_KEY ?? \"\"], [\"candidate\", candidate]]) {
-              const fp = createHash(\"sha256\").update(key).digest(\"hex\").slice(0, 12);
-              const headers = { Authorization: \"Bearer \" + key, \"Content-Type\": \"application/json\" };
-              const cat = await (await fetch(\"https://api.meta.ai/v1/models\", { headers })).json();
-              const codes = [];
-              for (let i = 0; i < 4; i++) {
-                const r = await fetch(\"https://api.meta.ai/v1/chat/completions\", { method: \"POST\", headers, body: JSON.stringify({ model, messages: [{ role: \"user\", content: \"Reply OK.\" }] }) });
-                codes.push(r.status);
-              }
-              console.log(JSON.stringify({ key: name, fingerprint: fp, catalog: cat.data?.map(m => m.id) ?? cat.error, completions: codes }));
-            }'"
-      - name: Install only MODEL_API_KEY and recreate containers
+          # Key and relay URL travel on stdin, never on a command line.
+          scp -i "$RUNNER_TEMP/key" -o BatchMode=yes -o StrictHostKeyChecking=yes "$RUNNER_TEMP/probe.mjs" "root@$DEPLOY_HOST:/opt/sidequest/muse-probe.mjs"
+          $SSH_CMD 'docker cp /opt/sidequest/muse-probe.mjs sidequest-worker-1:/tmp/muse-probe.mjs'
+          python3 -c 'import json, os; bases=[["direct","https://api.meta.ai/v1"]] + ([["relay", os.environ["RELAY_BASE"].rstrip("/")]] if os.environ.get("RELAY_BASE") else []); print(json.dumps({"key": os.environ["CANDIDATE_KEY"], "bases": bases}))' \
+            | $SSH_CMD 'docker exec -i sidequest-worker-1 node /tmp/muse-probe.mjs'
+      - name: Install MODEL_API_KEY and MUSE_BASE_URL, recreate containers
         env:
-          CANDIDATE: ${{ secrets.SIDEQUEST_MODEL_API_KEY }}
+          CANDIDATE_KEY: ${{ secrets.SIDEQUEST_MODEL_API_KEY }}
+          RELAY_BASE: ${{ secrets.SIDEQUEST_MUSE_BASE_URL }}
         run: |
           scp -i "$RUNNER_TEMP/key" -o BatchMode=yes -o StrictHostKeyChecking=yes scripts/install-runtime-env.py "root@$DEPLOY_HOST:/opt/sidequest/install-runtime-env.py"
-          CANDIDATE="$CANDIDATE" python3 -c 'import json, os, sys; json.dump({"MODEL_API_KEY": os.environ["CANDIDATE"]}, sys.stdout)' \
+          python3 -c 'import json, os; v={"MODEL_API_KEY": os.environ["CANDIDATE_KEY"]}; b=os.environ.get("RELAY_BASE","").rstrip("/"); v.update({"MUSE_BASE_URL": b} if b else {}); print(json.dumps(v))' \
             | $SSH_CMD 'python3 /opt/sidequest/install-runtime-env.py /opt/sidequest/.env.production'
           $SSH_CMD 'set -euo pipefail
             exec 9>/opt/sidequest/.deploy.lock; flock -w 600 9
@@ -63,16 +76,12 @@ jobs:
             export APP_ENV_FILE=/opt/sidequest/.env.production DEPLOY_RELEASE=$(cat /opt/sidequest/deployed-revision) COMPOSE_PROFILES=live
             docker compose --project-name sidequest --env-file "$APP_ENV_FILE" --project-directory "$dir" -f "$dir/compose.yaml" up -d --no-build --force-recreate --wait --wait-timeout 180 web worker
             docker inspect --format "{{.Name}} {{.State.Status}} since {{.State.StartedAt}}" sidequest-web-1 sidequest-worker-1'
-      - name: Probe the recreated worker
+      - name: Probe the recreated worker through its installed settings
         run: |
           sleep 10
-          $SSH_CMD "docker exec sidequest-worker-1 node --input-type=module -e '
-            const key = process.env.MODEL_API_KEY ?? \"\"; const model = process.env.MUSE_MODEL ?? \"muse-spark-1.3\";
-            const headers = { Authorization: \"Bearer \" + key, \"Content-Type\": \"application/json\" };
-            const cat = await (await fetch(\"https://api.meta.ai/v1/models\", { headers })).json();
-            const codes = [];
-            for (let i = 0; i < 6; i++) codes.push((await fetch(\"https://api.meta.ai/v1/chat/completions\", { method: \"POST\", headers, body: JSON.stringify({ model, messages: [{ role: \"user\", content: \"Reply OK.\" }] }) })).status);
-            console.log(JSON.stringify({ probe: \"after-install\", catalog: cat.data?.map(m => m.id) ?? cat.error, completions: codes }));'"
+          $SSH_CMD 'docker cp /opt/sidequest/muse-probe.mjs sidequest-worker-1:/tmp/muse-probe.mjs'
+          # Empty key = use the worker's MODEL_API_KEY; base = the worker's MUSE_BASE_URL (or Meta directly).
+          echo '{"key":"","bases":[["installed",""]]}' | $SSH_CMD 'docker exec -i sidequest-worker-1 node /tmp/muse-probe.mjs'
           $SSH_CMD 'docker logs --since 2m sidequest-worker-1 2>&1 | tail -20'
           curl --fail --silent --show-error https://getsidequest.tech/health/ready
       - name: Remove SSH key

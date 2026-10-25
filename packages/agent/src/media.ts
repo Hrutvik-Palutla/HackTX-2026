@@ -3,7 +3,7 @@ import { user, privateFacts, plans, type Db } from '@hacktx/db';
 import { AppError, sealJson } from '@hacktx/core';
 import { loadTemplate } from '@hacktx/templates';
 import type { ActorContext } from '@hacktx/contracts';
-import { createMuse } from './muse';
+import { createMuse, museBaseURL } from './muse';
 import { RunRecorder } from './recorder';
 import { readQuest } from './standout';
 
@@ -59,7 +59,7 @@ export async function transcribeVoice(db: Db, actor: ActorContext, audio: Blob) 
     form.set('request', new Blob([JSON.stringify({ model: 'muse-voice-transcribe-1.0', audioEncoding: 'WAV', mode: 'PUSH_TO_TALK' })], { type: 'application/json' }));
     form.set('audio', new Blob([bytes], { type: 'audio/wav' }), 'note.wav');
     const result = await rec.step('model', 'transcribe_voice', async () => {
-      const response = await fetch('https://api.meta.ai/v1/asr/transcribe', { method: 'POST', headers: { Authorization: `Bearer ${process.env.MODEL_API_KEY}` }, body: form, signal: AbortSignal.timeout(45000) });
+      const response = await fetch(`${museBaseURL()}/asr/transcribe`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.MODEL_API_KEY}` }, body: form, signal: AbortSignal.timeout(45000) });
       if (!response.ok) throw new AppError('PROVIDER', 'Voice transcription is unavailable. Type your note instead.', true);
       return await response.json() as { transcript?: string };
     }, () => ({ summary: 'Private recording transcribed for owner review. Provider cost unavailable; excluded from the displayed Spark cost total.' }));
@@ -75,7 +75,7 @@ export async function createQuestArt(db: Db, actor: ActorContext, planId: string
   const rec = await recorder(db, actor, 'quest-art', 'quest', 'create_quest_art', 'muse-image-1.0', planId);
   try {
     const art = await rec.step('model', 'create_quest_art', async () => {
-      const response = await fetch('https://api.meta.ai/v1/images/generations', { method: 'POST', headers: { Authorization: `Bearer ${process.env.MODEL_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'muse-image-1.0', prompt: `A playful violet and warm orange illustrated cooperative adventure badge inspired by this quest title: ${quest.title}. No words, no identifiable people.`, n: 1, response_format: 'b64_json', output_format: 'png' }), signal: AbortSignal.timeout(60000) });
+      const response = await fetch(`${museBaseURL()}/images/generations`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.MODEL_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'muse-image-1.0', prompt: `A playful violet and warm orange illustrated cooperative adventure badge inspired by this quest title: ${quest.title}. No words, no identifiable people.`, n: 1, response_format: 'b64_json', output_format: 'png' }), signal: AbortSignal.timeout(60000) });
       if (!response.ok) throw new AppError('PROVIDER', 'Quest art is unavailable. The text quest still works.', true);
       const result = await response.json() as { data?: { b64_json?: string }[] };
       const value = result.data?.[0]?.b64_json;

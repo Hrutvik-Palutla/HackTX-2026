@@ -38,3 +38,20 @@ describe('Muse model lookup recovery', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Muse base URL', () => {
+  it('uses MUSE_BASE_URL when set (relay), trimming a trailing slash', async () => {
+    vi.stubEnv('MUSE_BASE_URL', 'https://relay.example.workers.dev/token/v1/');
+    try {
+      const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(completion());
+      await createMuse({ apiKey: 'test-key', fetch }).chat({ messages });
+      expect(String(fetch.mock.calls[0]![0])).toBe('https://relay.example.workers.dev/token/v1/chat/completions');
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("defaults to Meta's API", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(completion());
+    await createMuse({ apiKey: 'test-key', fetch }).chat({ messages });
+    expect(String(fetch.mock.calls[0]![0])).toBe('https://api.meta.ai/v1/chat/completions');
+  });
+});

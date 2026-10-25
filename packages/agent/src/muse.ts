@@ -18,11 +18,19 @@ export interface Muse {
   structured<T>(input: { messages: ChatMessage[]; name: string; schema: z.ZodType<T> }): Promise<{ value: T; usage: Usage }>;
 }
 
+/**
+ * Meta's API root. MUSE_BASE_URL lets a host whose network Meta serves inconsistently (the Vultr worker gets
+ * empty model catalogs and model_not_found) reach the same API through a pass-through relay.
+ */
+export function museBaseURL() {
+  return (process.env.MUSE_BASE_URL?.trim() || 'https://api.meta.ai/v1').replace(/\/+$/, '');
+}
+
 export function createMuse(opts: { apiKey?: string; model?: string; baseURL?: string; fetch?: typeof globalThis.fetch } = {}): Muse {
   const apiKey = opts.apiKey ?? process.env.MODEL_API_KEY;
   if (!apiKey) throw new Error('MODEL_API_KEY is not set');
   const model = opts.model ?? process.env.MUSE_MODEL ?? 'muse-spark-1.3';
-  const client = new OpenAI({ apiKey, baseURL: opts.baseURL ?? 'https://api.meta.ai/v1', timeout: 45_000, maxRetries: 2, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
+  const client = new OpenAI({ apiKey, baseURL: opts.baseURL ?? museBaseURL(), timeout: 45_000, maxRetries: 2, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
 
   // Production probes returned model_not_found and 200 for identical requests seconds
   // apart. The SDK doesn't retry 404s. Retry only that lookup failure, at the model
