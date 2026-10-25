@@ -30,10 +30,13 @@ for (const [name, extra] of [['minimal-1', {}], ['full-tools-1', { tools, tool_c
     console.log(JSON.stringify({ probe: name, error: error.message }));
   }
 }
-try {
-  const response = await createMuse().chat({ messages, tools });
-  console.log(JSON.stringify({ probe: 'actual-sdk-client', ok: true, usage: response.usage }));
-} catch (error) {
-  console.log(JSON.stringify({ probe: 'actual-sdk-client', ok: false, status: error.status, code: error.code,
-    error: error.error, requestId: error.request_id }));
+const muse = createMuse();
+for (let attempt = 1; attempt <= 5; attempt++) {
+  try {
+    const response = await muse.chat({ messages, tools });
+    console.log(JSON.stringify({ probe: 'actual-sdk-client', attempt, ok: true, usage: response.usage }));
+  } catch (error) {
+    console.log(JSON.stringify({ probe: 'actual-sdk-client', attempt, ok: false, status: error.status, code: error.code,
+      error: error.error, requestId: error.request_id }));
+  }
 }
