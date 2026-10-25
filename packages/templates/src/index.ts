@@ -14,6 +14,7 @@ const CONVERSATION_TOOLS = [
 ];
 
 const model = process.env.MUSE_MODEL ?? 'muse-spark-1.3';
+export const PRODUCT_VOICE = 'Write in plain, concise language. Use short names for plans and activities. Skip slogans, sales copy, generic encouragement and claims about how people feel. Do not repeat dates or venue names in every sentence. Give specific choices and honest unknowns.';
 
 const SHARED = `You coordinate a real outing for a group of friends.
 Rules you must follow:

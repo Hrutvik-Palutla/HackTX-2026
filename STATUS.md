@@ -2,6 +2,15 @@
 
 Each owner keeps their own section current: status, files, what actually works + the check run, blockers, next action.
 
+## Chat-first UX and visual proposal — ready for review; not deployed (October 25)
+
+- **Owner:** current integration agent, authorized to improve copy/flow and commit a separate review branch. Based on latest upstream `eae4bac`, preserving the teammate's Sid integration. Branch: `design/chat-first-preview`.
+- **Files:** public home/example/compatibility routes, account/plan wording, shared chat panel, agent voice, scoped chat API/core/worker plumbing, `messages.plan_id` additive migration, contracts, tests and `docs/design/`.
+- **Working locally:** one phone-free browser-only example with choices, friend views, same-option votes, confirmation, time conflict/approval reset, activities and labeled sample chat. Old demo/preview links converge there. Real plan chat reads scoped website/provider group messages and queues only explicitly requested linked-group posts; private threads, other plans and unscoped replay history are excluded. No arbitrary recipient or actor is accepted from the client.
+- **Design:** original generated scene and full-page concept saved at `docs/design/sidequest-concept-v1.png`, with the exact prompt/provenance. The proposed pine/ivory/copper theme and hero assets are **not implemented** and await approval. The walkthrough and Snowflake/SpaceXSI capability review are in `docs/design/CHAT_FIRST_REVIEW.md`; neither sponsor addition is claimed as used.
+- **Checks:** backend/worker TypeScript and Next production build pass; 65 backend tests and 37 messaging/calendar tests pass. All 36 desktop/mobile checks pass, covering no-account entry, no example API calls, time/vote repair, private boundaries, explicit posting destination and legacy redirects. An initial native-select test locator failed on both sizes; role-based reruns pass. Final Linux CI is requested on this review branch only; its deployment job is restricted to main.
+- **Blockers / next action:** user reviews visual image and branch; integration owner coordinates the included `0001` migration plus web/worker rollout only after review. Production was not migrated or deployed. Real linked-group delivery, completed phone sign-in and personal Google consent/calendar writes remain acceptance checks. Review upstream automatic group-creation/notification and selection-triggered calendar-sync consent before live rollout, as described in the branch review. No live external action was performed here.
+
 ## Standout integration and release — done; personal consent/acceptance remains (October 25)
 
 - **Owner:** integration agent, explicitly authorized to finish, push and deploy. Older sections below are historical handoffs.

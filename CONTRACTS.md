@@ -1,5 +1,13 @@
 # Shared Technical Contracts
 
+## Chat-first UX branch — preliminary; not deployed
+
+- Additive migration `0001_simple_shooting_star`: nullable `messages.plan_id` plus a plan/time index. Baseline remains unchanged. Do not apply this to production until the branch is reviewed. No provider history is backfilled by guessing from a conversation's current plan.
+- `GET /api/plans/:id/chat` returns `{ data: { messages, linkedGroupChat } }`. Membership is required. It combines that plan's web group/own private thread with public messages from linked Claw group threads, limited to the latest 100. Every message must explicitly match the plan, including web/private-projection history, because conversations can move between plans. Other people's private threads, unscoped history and other plans' messages are excluded. `GET .../messages` retains its array envelope.
+- `POST .../messages` accepts optional `destination: website|linked_chat`, default website. Only group messages may target a linked chat. The server selects exactly one currently active linked group; arbitrary client chat IDs are not accepted. It attributes the verified author, queues explicit outbound delivery with a 90-second expiry and never claims a queued message is delivered. Private notes cannot be forwarded to a group. Chat-generation alone does not post a user's website message externally.
+- New verified live inbound messages are attached to their actual plan. Provider replays remain unscoped; their old history and derived replies are not exposed as current-plan web messages. A queued website message is not processed against a different plan if its linked chat switches plans.
+- `/try` is a browser-only example, not anonymous access to real group data, a real model session or real messaging. A phone is requested when using a personal group; calendar consent remains optional. No changes from this branch deploy automatically.
+
 ## Standout integration addendum — October 25
 
 - `GET /api/demo` is a read-only public fixture, not an authentication bypass: only a selected test-mode plan from `sidequest_demo_alex` qualifies; every member must have a `sidequest_demo_` ID, `@demo.sidequest.invalid` email and no phone. No arbitrary plan ID is accepted. The UI labels synthetic people, recorded provider results and simulated completions. Tests reject real phones or email addresses in that fixture.

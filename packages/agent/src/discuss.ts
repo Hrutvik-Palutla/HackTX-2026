@@ -2,11 +2,11 @@
 //  - provider: a normalized, already-authenticated Linq/Telegram message (Part 3's webhook) -> identity -> stored row
 //  - web: a row already stored by the authenticated POST /plans/:id/messages handler
 // Then: bounded Muse tool loop as that sender -> reply in the same conversation.
-import { and, desc, eq, inArray, ne, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 import { conversations, messages, messagingIdentities, planParticipants, plans, user, type Db } from '@hacktx/db';
 import { InboundMessage, type ActorContext } from '@hacktx/contracts';
-import { AGENT_HANDLE, AppError, activeTally, pendingRequestsFor, parseCity, listOwnFacts, open, postToConversation, publicPlan, seal } from '@hacktx/core';
-import { loadTemplate } from '@hacktx/templates';
+import { AGENT_HANDLE, AppError, activeTally, assertMember, pendingRequestsFor, parseCity, listOwnFacts, open, postToConversation, publicPlan, seal } from '@hacktx/core';
+import { loadTemplate, PRODUCT_VOICE } from '@hacktx/templates';
 import type { ChatMessage, Muse } from './muse';
 import { LimitError, RunRecorder } from './recorder';
 import { chatMembers, friendsAmong, toolsFor, type ToolCtx } from './tools';
@@ -17,7 +17,7 @@ const HISTORY = 20;
 // State-changing tools that should succeed at most once per incoming message.
 const ONCE_PER_MESSAGE = new Set(['start_plan', 'respond_friend_request', 'record_vote', 'propose_selection', 'request_replan']);
 
-export type InboundJob = { encryptedInbound: string } | { sendingLine: string; message: InboundMessage; joinedGroup?: boolean } | { web: { messageId: string } };
+export type InboundJob = { encryptedInbound: string } | { sendingLine: string; message: InboundMessage; joinedGroup?: boolean; replayed?: boolean } | { web: { messageId: string } };
 type Deps = { db: Db; muse: Muse };
 
 export async function handleInbound(deps: Deps, job: InboundJob) {
@@ -27,6 +27,7 @@ export async function handleInbound(deps: Deps, job: InboundJob) {
     const [stored] = await db.select().from(messages).where(eq(messages.id, job.web.messageId));
     if (!stored?.senderUserId) return { status: 'unknown_sender' as const };
     const [conv] = await db.select().from(conversations).where(eq(conversations.id, stored.conversationId));
+    if (!conv || (stored.planId && conv.activePlanId !== stored.planId)) return { status: 'stale_plan' as const };
     return converse(deps, conv!, stored, stored.senderUserId);
   }
   const m = InboundMessage.parse(job.message);
@@ -54,11 +55,19 @@ export async function handleInbound(deps: Deps, job: InboundJob) {
     replyToProviderMessageId: m.replyToMessageId, occurredAt: new Date(m.occurredAt),
   }).onConflictDoNothing();
   const [stored] = await db.select().from(messages).where(and(eq(messages.conversationId, conv.id), eq(messages.providerMessageId, m.messageId)));
+  if (stored?.planId && stored.planId !== conv.activePlanId) return { status: 'stale_plan' as const };
   if (!userId) {
     if (job.joinedGroup && conv.kind === 'group') await postToConversation(db, conv, GROUP_INTRO, { effectKey: `intro:${conv.id}` });
     return { status: 'unknown_sender' as const, conversationId: conv.id };
   }
-  return converse(deps, conv, stored!, userId, !!job.joinedGroup);
+  return converse(deps, conv, stored!, userId, !!job.joinedGroup, !job.replayed);
+}
+
+async function scopeMessage(db: Db, stored: typeof messages.$inferSelect, planId: string | null, userId: string, newlySelected = false) {
+  if (stored.planId || !planId) return;
+  const plan = await assertMember(db, planId, userId).catch(e => { if (e instanceof AppError && e.code === 'NOT_FOUND') return null; throw e; });
+  if (!plan || (!newlySelected && stored.occurredAt < plan.createdAt)) return;
+  await db.update(messages).set({ planId }).where(and(eq(messages.id, stored.id), isNull(messages.planId)));
 }
 
 async function converse(
@@ -67,6 +76,7 @@ async function converse(
   stored: typeof messages.$inferSelect,
   userId: string,
   joinedGroup = false,
+  mayScope = true,
 ) {
   const kind = conv.kind as 'group' | 'private';
   const [existingReply] = await db.select({ id: messages.id }).from(messages).where(and(
@@ -95,6 +105,7 @@ async function converse(
     else if (privatePlanChoices.length === 0) privatePlanChoices = [];
   }
   const [plan] = planId ? await db.select().from(plans).where(eq(plans.id, planId)) : [];
+  if (mayScope) await scopeMessage(db, stored, planId, userId);
   const template = await loadTemplate(db, plan?.templateId ?? 'local-outing');
 
   // Context: only what this audience may see. The agent's own earlier messages are part of the transcript.
@@ -125,7 +136,7 @@ async function converse(
   const ctx: ToolCtx = { db, actor, planId: plan?.id ?? null, conversation: { id: conv.id, kind }, messageId: stored.id, providerMessageId: stored.providerMessageId, availablePlanIds: privatePlanChoices.map(plan => plan.id) };
   try {
     const reply = await runToolLoop({ muse, rec, ctx, allowedTools: [...template.allowedTools, ...(kind === 'private' ? ['select_plan'] : [])], messages: [
-      { role: 'system', content: `${template.systemInstruction}
+      { role: 'system', content: `${template.systemInstruction}\n${PRODUCT_VOICE}
 You are in a ${kind === 'group' ? 'GROUP chat: everything you write is seen by all members' : 'PRIVATE chat with the sender only'}.
 Respond when addressed or when the message affects the plan (availability, votes, preferences, go-ahead, new requests).
 Stay quiet during unrelated chatter: answer exactly ${NO_REPLY}.
@@ -152,9 +163,10 @@ Message ids in brackets can be cited as evidence.` },
     ] });
     await rec.finish('ok');
     const text = reply.trim();
+    if (mayScope) await scopeMessage(db, stored, ctx.planId, userId, ctx.planId !== planId);
     const replied = !!text && text !== NO_REPLY;
     if (replied) {
-      await postToConversation(db, conv, text.slice(0, 1500), { effectKey: `reply:${stored.id}`, planId: plan?.id ?? null, privateUserId: userId });
+      await postToConversation(db, conv, text.slice(0, 1500), { effectKey: `reply:${stored.id}`, planId: ctx.planId ?? plan?.id ?? null, privateUserId: userId, hideFromPlan: !mayScope && !stored.planId });
     } else if (joinedGroup && kind === 'group') {
       await postToConversation(db, conv, GROUP_INTRO, { effectKey: `intro:${conv.id}` });
     }

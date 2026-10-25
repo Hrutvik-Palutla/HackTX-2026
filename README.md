@@ -1,18 +1,22 @@
 # SideQuest
 
-**Turning “we should hang out” into plans that fit everyone’s interests and schedules.**
+**Make plans. Keep the group chat.**
 
-SideQuest connects confirmed shared interests to real outings, helps the whole group agree on a time, and turns the chosen outing into a cooperative quest. The application uses Meta Muse, SerpApi, Tiger Postgres, and a reusable, versioned agent runner with Studio monitoring.
+Ask Sid in your friends’ group chat. SideQuest finds sourced options, checks known availability and collects everyone’s votes. The website is the board for those plans, messages and optional activities. Claw Messenger carries the Messages conversation; Sid is the agent. The backend uses Meta Muse, SerpApi, Tiger Postgres and versioned agent settings.
 
-Production: **https://getsidequest.tech**. The public **[/demo](https://getsidequest.tech/demo)** is a read-only recorded journey with synthetic friends and real provider outputs. Private group interactions require verified phone sign-in. `/plans?preview=1` remains a separate UI sample, not a live backend test.
+Production: **https://getsidequest.tech**. This branch, **`design/chat-first-preview`**, is a draft based on `eae4bac`; it has **not been deployed**. Its public `/try` is an interactive browser-only example with fictional friends, no account and no API calls. `/demo` and old `?preview=1` links lead there. The older recorded provider outputs remain an internal test fixture at `/api/demo`, rather than a second user journey. Real private groups still require verified identity.
+
+The proposed visual theme exists **only as [an image](docs/design/sidequest-concept-v1.png)**, pending approval. This branch changes wording, entry flow and chat behavior while retaining the existing theme. See the [walkthrough, decisions and sponsor review](docs/design/CHAT_FIRST_REVIEW.md) and [image prompt/provenance](docs/design/CONCEPT_PROMPT.md).
+
+Before running this branch against a real database, apply its additive migration `0001_simple_shooting_star.sql` with `pnpm db:migrate` using the same verified-TLS configuration. It adds nullable message-level plan scope and an index; it intentionally does not publish historical chat. **This migration has not been applied to production.** The readiness endpoint checks that the new column exists.
 
 ## Standout flow
 
-1. Add a note or link in **What are you into?** Optional photo descriptions (Spark) and WAV voice transcription (Muse Voice) fill a private draft for review.
+1. Add a note or link in **Your interests**. Optional photo descriptions (Spark) and WAV voice transcription (Muse Voice) fill a private draft for review.
 2. Confirm the suggested interests and explicitly choose which quotes can be used by connected friends in group plans. Nothing is shared by default.
-3. Select connected friends and click **Find our thing**. Common Ground cites actual shared chips from at least two people. Revoked or changed evidence cannot be reused.
+3. Select connected friends and click **Find ideas**. The suggestions cite confirmed shared interests from at least two people. Revoked or changed evidence cannot be reused.
 4. Create the plan. SerpApi searches the grounded theme, options retain source links and honest unknowns, and the worker refreshes connected calendars. Each current member must approve the same option and version.
-5. Create a cooperative quest: three photo challenges and two riddles. Shared progress records who completed each challenge; a changed selection needs a new quest. Muse Image can generate a quest card.
+5. After choosing an outing, open **Photo challenges and riddles** if the group wants activities. Shared progress records who completed each one; a changed selection needs new activities. Muse Image can add an illustration.
 6. In **/studio**, authorized teammates edit instructions, allowed tools, and limits. Saving creates a new recipe version; subsequent runs load it, and traces retain their actual version, model calls, timing, tokens, and available cost estimates.
 
 Text notes, manual availability, web chat, and ICS calendar downloads remain available without optional media or Google consent. Calendar event creation does not reserve a venue. Booking/payment integrations keep their explicit handoff and configuration boundaries.
@@ -63,7 +67,7 @@ pnpm install
 pnpm dev
 ```
 
-Open http://localhost:3000. Live pages require a verified session and a completed profile. The sample workspace is explicitly separate at http://localhost:3000/plans?preview=1; it never authenticates a demo account.
+Open http://localhost:3000/try to use the public example. Private pages require a verified session and a completed profile. Old preview links redirect to `/try`; the example never authenticates as another person.
 
 ## What works in this part
 
@@ -89,7 +93,7 @@ pnpm test:e2e
 TEST_DATABASE_URL=postgresql://.../isolated_test_db pnpm test:integration
 ```
 
-The browser suite runs six journeys on desktop and mobile with controlled API responses; it tests the UI independently of provider services. Playwright starts the built app automatically when no local server is running.
+The browser suite covers account, voting, privacy, agent settings, interests, chat and the public example on desktop and mobile. Private journeys use controlled API responses; these are UI checks, not proof of live provider delivery. Playwright starts the built app automatically when no local server is running.
 
 The integration test creates a randomly named schema, generates Better Auth tables inside it, and removes that schema afterward. It exercises real Better Auth sessions and real PostgreSQL persistence without contacting a messaging provider. It is skipped unless `TEST_DATABASE_URL` is set. Never point test commands at a production database.
 

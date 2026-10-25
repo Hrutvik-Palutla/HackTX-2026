@@ -14,11 +14,11 @@ export async function postToConversation(
   db: Db,
   conv: Conv,
   text: string,
-  o: { effectKey: string; planId?: string | null; versionId?: string | null; privateUserId?: string },
+  o: { effectKey: string; planId?: string | null; versionId?: string | null; privateUserId?: string; hideFromPlan?: boolean },
 ) {
   const isPrivate = conv.kind === 'private';
   await db.insert(messages).values({
-    conversationId: conv.id, providerMessageId: `agent:${o.effectKey}`, senderUserId: null, senderHandle: AGENT_HANDLE,
+    conversationId: conv.id, planId: o.hideFromPlan ? null : o.planId ?? null, providerMessageId: `agent:${o.effectKey}`, senderUserId: null, senderHandle: AGENT_HANDLE,
     isPrivate, body: isPrivate ? null : text, bodyEnc: isPrivate ? seal('message', text) : null, occurredAt: new Date(),
   }).onConflictDoNothing();
   if (conv.provider === WEB) return;

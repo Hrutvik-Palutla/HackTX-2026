@@ -172,6 +172,7 @@ export const planConversations = pgTable('plan_conversations', {
 export const messages = pgTable('messages', {
   id: pk(),
   conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  planId: uuid('plan_id').references(() => plans.id, { onDelete: 'set null' }),
   providerMessageId: text('provider_message_id').notNull(),
   senderUserId: userRef('sender_user_id'),
   senderHandle: text('sender_handle').notNull(),
@@ -182,6 +183,7 @@ export const messages = pgTable('messages', {
   occurredAt: ts('occurred_at').notNull(),
 }, (t) => [
   uniqueIndex().on(t.conversationId, t.providerMessageId),
+  index().on(t.planId, t.occurredAt),
   check('message_body_privacy', sql`(${t.isPrivate} and ${t.body} is null) or (not ${t.isPrivate} and ${t.bodyEnc} is null)`),
 ]);
 

@@ -8,6 +8,13 @@
       "when": 1792894199565,
       "tag": "0000_baseline",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792912656845,
+      "tag": "0001_simple_shooting_star",
+      "breakpoints": true
     }
   ]
 }

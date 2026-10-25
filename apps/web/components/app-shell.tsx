@@ -4,15 +4,15 @@ import { SideQuestLogo } from "./brand";
 import { NavigationIcon } from "./navigation-icon";
 
 export const viewDescriptions: Record<string, string> = {
-  plans: "See what’s coming up and choose what works.",
-  friends: "Manage your connections and invitations.",
+  plans: "Your group’s plans, votes and messages.",
+  friends: "Friends who can plan with you.",
   settings: "Manage your profile and account preferences.",
   detail: "Choose every option that works, then pick a favorite.",
-  private: "Details shared only with you and the planner.",
+  private: "Notes for Sid that your friends can’t see.",
   payment: "Review your share and payment status.",
-  studio: "Templates and redacted execution records.",
-  login: "Sign in with your phone to see your plans and friends.",
-  signup: "Verify your phone, then complete your profile.",
+  studio: "Edit Sid’s instructions and review what happened.",
+  login: "Use your phone to access your own group.",
+  signup: "Create your account to plan with friends.",
   invite: "Connect with the friend who invited you.",
 };
 
@@ -28,14 +28,15 @@ export function AppShell({
   children: ReactNode;
 }) {
   const href = (path: string) => (preview ? `${path}?preview=1` : path);
+  const publicPage = ['home', 'example', 'demo'].includes(view);
   return (
     <div className="app" data-view={view}>
       <header className="app-header">
-        <Link className="logo" href={href("/plans")}>
+        <Link className="logo" href={publicPage ? '/' : href("/plans")}>
           <SideQuestLogo />
         </Link>
         <nav className="app-nav" aria-label="Main navigation">
-          {[
+          {publicPage ? <><Link href="/try">Try it</Link><Link href="/#how-it-works">How it works</Link><Link href="/login">Sign in</Link></> : [
             ["plans", "Plans"],
             ["friends", "Friends"],
             ["settings", "Account"],
@@ -71,7 +72,7 @@ export function AppShell({
           {footer ??
             (preview
               ? "Sample workspace · Austin"
-              : "Private plans. Connected friends.")}
+              : "")}
         </span>
       </footer>
     </div>

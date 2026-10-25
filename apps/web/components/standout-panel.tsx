@@ -20,9 +20,9 @@ export function DropNotebook() {
   const perform = async (fn: () => Promise<void>) => { setBusy(true); setError(''); setNotice(''); try { await fn(); } catch (e) { setError(errorText(e)); } finally { setBusy(false); } };
   const edit = (dropId: string, chipId: string, patch: Partial<Chip>) => setDrops(rows => rows.map(d => d.id === dropId ? { ...d, chips: d.chips.map(c => c.id === chipId ? { ...c, ...patch } : c) } : d));
   return <section className="panel standout-notebook">
-    <span className="eyebrow">Start with what you care about</span>
-    <h2>What are you into?</h2>
-    <p>Drop a note or a link. AI suggests interests and things to try. You choose what friends can see.</p>
+    <span className="eyebrow">Your interests</span>
+    <h2>What would you like to do?</h2>
+    <p>Add a note, photo, voice note or link. Sid picks out interests for you to review. You choose what friends can use.</p>
     <form className="form-panel" onSubmit={e => { e.preventDefault(); void perform(async () => { const saved = await api<Drop>('/drops', { method: 'POST', body: JSON.stringify({ note, url: url || null }) }); setDrops(v => [saved, ...v]); setNote(''); setUrl(''); setNotice('Suggestions are private. Confirm each one before sharing.'); }); }}>
       <label>Something you enjoy or want to try<textarea required maxLength={4000} value={note} onChange={e => setNote(e.target.value)} placeholder="I want to try stargazing, and I love taking night photos." /></label>
       <label>Link (optional)<input type="url" value={url} maxLength={2000} onChange={e => setUrl(e.target.value)} placeholder="https://…" /></label>
@@ -44,7 +44,7 @@ export function DropNotebook() {
         <label className="choice"><input type="checkbox" checked={c.shared} disabled={!c.confirmed} onChange={e => edit(d.id, c.id, { shared: e.target.checked })} />Let my connected friends use this interest and quote in their group plans</label>
       </div>)}
       <div className="standout-actions"><button disabled={busy} onClick={() => void perform(async () => { await api(`/drops/${d.id}`, { method: 'PATCH', body: JSON.stringify({ chips: d.chips.map(({ id, label, confirmed, shared }) => ({ id, label, confirmed, shared })) }) }); setNotice('Sharing choices saved. Only checked interests can be used by your friends.'); })}>Save sharing choices</button>
-        <button className="secondary" disabled={busy} onClick={() => void perform(async () => { await api(`/drops/${d.id}`, { method: 'DELETE' }); setDrops(v => v.filter(x => x.id !== d.id)); setNotice('Drop deleted. It can no longer be used for common ground.'); })}>Delete drop</button></div>
+        <button className="secondary" disabled={busy} onClick={() => void perform(async () => { await api(`/drops/${d.id}`, { method: 'DELETE' }); setDrops(v => v.filter(x => x.id !== d.id)); setNotice('Note deleted. Sid won’t use it for new ideas.'); })}>Delete note</button></div>
     </article>)}
   </section>;
 }
@@ -56,8 +56,8 @@ export function CommonGroundPicker({ friendIds, onPick }: { friendIds: string[];
   const key = friendIds.slice().sort().join(',');
   useEffect(() => { setGround(null); onPick(null); }, [key]);
   return <section className="common-ground-card">
-    <h3>Find our thing</h3><p>Connect your shared interests to a real outing for this group.</p>
-    <button type="button" className="secondary" disabled={busy || !friendIds.length} onClick={() => { setBusy(true); setError(''); void api<Ground>('/common-ground', { method: 'POST', body: JSON.stringify({ friendIds }) }).then(g => { setGround(g); onPick(g); }).catch(e => setError(errorText(e))).finally(() => setBusy(false)); }}>{busy ? 'Finding your common ground…' : 'Find our thing'}</button>
+    <h3>Find something everyone would like</h3><p>Use the interests your friends chose to share.</p>
+    <button type="button" className="secondary" disabled={busy || !friendIds.length} onClick={() => { setBusy(true); setError(''); void api<Ground>('/common-ground', { method: 'POST', body: JSON.stringify({ friendIds }) }).then(g => { setGround(g); onPick(g); }).catch(e => setError(errorText(e))).finally(() => setBusy(false)); }}>{busy ? 'Finding ideas…' : 'Find ideas'}</button>
     {!friendIds.length && <p className="hint">Select connected friends first.</p>}
     {error && <p role="alert">{error}</p>}
     {ground && <GroundEvidence ground={ground} />}
@@ -79,15 +79,15 @@ export function QuestPanel({ planId, userId, status }: { planId: string; userId:
   const completed = quest?.challenges.filter(c => c.completedBy).length ?? 0;
   return <section className="panel quest-panel">
     {ground && <GroundEvidence ground={ground} />}
-    <span className="eyebrow">Make it an adventure</span><h2>{quest?.title ?? 'Your cooperative quest'}</h2>
-    {!quest && <><p>Three photo challenges and two riddles, made for your chosen outing. Work together and track your progress.</p><button disabled={busy || !eligible} onClick={() => void perform(() => api<Quest>(`/plans/${planId}/quest`, { method: 'POST' }))}>{busy ? 'Creating your quest…' : 'Create our quest'}</button>{!eligible && <p className="hint">Agree on an outing first. A changed plan needs a new quest.</p>}</>}
+    <span className="eyebrow">Optional activities</span><h2>{quest?.title ?? 'Photo challenges and riddles'}</h2>
+    {!quest && <><p>Try three photo challenges and two riddles when you get there.</p><button disabled={busy || !eligible} onClick={() => void perform(() => api<Quest>(`/plans/${planId}/quest`, { method: 'POST' }))}>{busy ? 'Preparing activities…' : 'Add some activities'}</button>{!eligible && <p className="hint">Finish checkout to add activities.</p>}</>}
     {error && <p role="alert">{error}</p>}
-    {quest?.art && <img className="quest-art" src={quest.art} alt="AI-generated illustration for this cooperative quest" />}
-    {quest && !quest.art && <button className="secondary" disabled={busy} onClick={() => void perform(() => api<Quest>(`/plans/${planId}/quest/art`, { method: 'POST' }))}>{busy ? 'Creating…' : 'Make a quest card'}</button>}
+    {quest?.art && <img className="quest-art" src={quest.art} alt="Illustration for this outing" />}
+    {quest && !quest.art && <button className="secondary" disabled={busy} onClick={() => void perform(() => api<Quest>(`/plans/${planId}/quest/art`, { method: 'POST' }))}>{busy ? 'Creating…' : 'Add an illustration'}</button>}
     {quest && <><p role="status">{completed} / 5 complete</p><progress max={5} value={completed} aria-label="Quest progress" /><div className="quest-grid">{quest.challenges.map(c => <article className="quest-challenge" key={c.id}>
       <span className="eyebrow">{c.kind === 'photo' ? 'Photo challenge' : 'Riddle'}</span><h3>{c.title}</h3><p>{c.challenge}</p><details><summary>Need a hint?</summary><p>{c.hint}</p></details>
       <label className="choice"><input type="checkbox" checked={Boolean(c.completedBy)} disabled={busy || Boolean(c.completedBy && c.completedBy !== userId)} onChange={e => void perform(() => api<Quest>(`/plans/${planId}/quest`, { method: 'PATCH', body: JSON.stringify({ challengeId: c.id, done: e.target.checked }) }))} />{c.completedBy === userId ? 'Completed by you' : c.completedBy ? `Completed by ${c.completedByName ?? 'a friend'}` : 'We did this'}</label>
-    </article>)}</div>{completed === 5 && <div className="quest-recap"><h3>Quest complete!</h3><p>You turned a shared interest into an adventure.</p><ul>{quest.challenges.map(c => <li key={c.id}>{c.title} · {c.completedBy === userId ? 'You' : c.completedByName ?? 'A friend'} · {c.completedAt ? new Date(c.completedAt).toLocaleTimeString() : ''}</li>)}</ul></div>}<p className="hint">Generated for this outing. No tickets or reservations are implied.</p></>}
+    </article>)}</div>{completed === 5 && <div className="quest-recap"><h3>All five done</h3><p>Here’s what everyone completed.</p><ul>{quest.challenges.map(c => <li key={c.id}>{c.title} · {c.completedBy === userId ? 'You' : c.completedByName ?? 'A friend'} · {c.completedAt ? new Date(c.completedAt).toLocaleTimeString() : ''}</li>)}</ul></div>}<p className="hint">Activities for this outing. Tickets and reservations are separate.</p></>}
   </section>;
 }
 

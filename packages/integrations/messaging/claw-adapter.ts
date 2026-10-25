@@ -56,7 +56,7 @@ export async function ingestClawMessage(db: Db, sendingLine: string, m: ClawInbo
     if (!rows[0]) return false;
     const joinedGroup = m.isGroup ? await onGroupMessage(tx as unknown as Db, sendingLine, m) : false;
     if (!m.isGroup) await maybeGreetStranger(tx as unknown as Db, sendingLine, m);
-    await enqueue(tx as unknown as Db, { kind: 'process_inbound', dedupeKey: `${CLAW_PROVIDER}:${m.messageId}`, payload: { encryptedInbound: seal('inbound', JSON.stringify({ sendingLine, message, joinedGroup })) } });
+    await enqueue(tx as unknown as Db, { kind: 'process_inbound', dedupeKey: `${CLAW_PROVIDER}:${m.messageId}`, payload: { encryptedInbound: seal('inbound', JSON.stringify({ sendingLine, message, joinedGroup, replayed: Boolean(m.replay) })) } });
     return true;
   });
 }
@@ -158,6 +158,12 @@ export function createSendOutboxHandler(client: Sender): Handler {
     const [row] = await db.select().from(outbox).where(eq(outbox.id, outboxId));
     if (!row || row.status === 'sent' || row.status === 'failed' || row.status === 'unknown') return;
     if (row.expiresAt && row.expiresAt < new Date()) { await setOutbox(db, row.id, 'failed'); return; } // e.g. stale OTP
+    const recipient = OutboundRecipient.parse(row.recipient);
+    if (row.effectKey.startsWith('web-group:')) {
+      if (recipient.kind !== 'group') { await setOutbox(db, row.id, 'failed'); return; }
+      const [conv] = await db.select({ planId: conversations.activePlanId }).from(conversations).where(eq(conversations.id, recipient.conversationId));
+      if (!conv || conv.planId !== row.planId) { await setOutbox(db, row.id, 'failed'); return; }
+    }
 
     const { effect } = await reserveEffect(db, { operationKey: `send:${row.effectKey}`, kind: 'message_send', planId: row.planId });
     if (effect.state === 'confirmed') { await setOutbox(db, row.id, 'sent', effect.providerRequestId ?? undefined); return; }
@@ -166,7 +172,7 @@ export function createSendOutboxHandler(client: Sender): Handler {
       throw new AppError('PROVIDER', `send ${row.effectKey} outcome unknown after an interrupted attempt; not resending`);
     }
 
-    const target = await resolveTarget(db, OutboundRecipient.parse(row.recipient));
+    const target = await resolveTarget(db, recipient);
     const text = row.body ?? open('outbox', row.bodyEnc!);
     await setEffect(db, effect.id, 'inflight');
     let res;
@@ -287,7 +293,7 @@ export function createClawGroupCreator(client: Sender, sendingLine: string) {
       const r = await createClawGroup(db, client, { sendingLine, memberHandles, introText: intro, planId });
       await setEffect(db, effect.id, 'confirmed', r.chatId);
       await db.insert(messages).values({
-        conversationId: r.conversationId, providerMessageId: `agent:intro:${planId}`, senderUserId: null, senderHandle: AGENT_HANDLE,
+        conversationId: r.conversationId, planId, providerMessageId: `agent:intro:${planId}`, senderUserId: null, senderHandle: AGENT_HANDLE,
         isPrivate: false, body: intro, occurredAt: new Date(),
       }).onConflictDoNothing();
     } catch (e) {

@@ -114,3 +114,7 @@ export function safeUrl(value: string | null | undefined) {
     return null;
   }
 }
+
+export function planStatusLabel(status: string) {
+  return ({ waiting_connections: 'Waiting for friends', planning: 'Finding places', clarifying: 'A few details needed', voting: 'Waiting for votes', selected: 'Plan confirmed', quoting: 'Checking the price', awaiting_payment_approval: 'Waiting for the buyer', booking: 'Checking out', booked: 'Booking recorded', needs_handoff: 'Continue with the venue', change_requested: 'Updating the plan', closed: 'Plan closed' } as Record<string, string>)[status] ?? 'Plan in progress';
+}

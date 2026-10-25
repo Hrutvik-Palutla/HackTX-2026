@@ -1006,3 +1006,6 @@ pre {
 .landing-steps > * { min-width:0; }
 .app[data-view="demo"] .panel { max-width:none; }
 .app[data-view="demo"] .back { white-space:normal; overflow-wrap:anywhere; }
+.chat-log { list-style:none; padding:0; max-height:24rem; overflow-y:auto; }
+.chat-log li { padding:.8rem 0; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
+.chat-log p { margin:.3rem 0; white-space:pre-wrap; }

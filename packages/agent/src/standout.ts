@@ -3,7 +3,7 @@ import { and, eq, inArray, isNull, desc } from 'drizzle-orm';
 import { z } from 'zod';
 import { privateFacts, user, planParticipants, plans, planOptions, agentRuns, type Db } from '@hacktx/db';
 import { AppError, assertMember, missingConnections, openJson, sealJson, publicPlan } from '@hacktx/core';
-import { loadTemplate } from '@hacktx/templates';
+import { loadTemplate, PRODUCT_VOICE } from '@hacktx/templates';
 import type { ActorContext } from '@hacktx/contracts';
 import type { Muse } from './muse';
 import { RunRecorder } from './recorder';
@@ -24,7 +24,7 @@ async function modelStep<T>(db: Db, muse: Muse, templateId: 'drop-extraction' | 
   try {
     if (!template.allowedTools.includes({ 'drop-extraction': 'extract_interests', 'common-ground': 'match_shared_interests', quest: 'create_quest' }[templateId])) throw new AppError('FORBIDDEN', 'This recipe has disabled its task.');
     rec.charge('turn');
-    const result = await rec.step('model', templateId, () => muse.structured({ name: templateId.replaceAll('-', '_'), schema, messages: [{ role: 'system', content: template.systemInstruction }, { role: 'user', content: JSON.stringify(input) }] }), r => ({ summary: 'Structured result generated; private input omitted.', usage: r.usage }));
+    const result = await rec.step('model', templateId, () => muse.structured({ name: templateId.replaceAll('-', '_'), schema, messages: [{ role: 'system', content: `${template.systemInstruction}\n${PRODUCT_VOICE}` }, { role: 'user', content: JSON.stringify(input) }] }), r => ({ summary: 'Structured result generated; private input omitted.', usage: r.usage }));
     await rec.finish('ok');
     return { value: result.value, runId: rec.runId };
   } catch (error) { await rec.finish('error', 'Generation failed validation or provider request.'); throw error; }

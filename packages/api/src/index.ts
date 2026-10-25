@@ -4,12 +4,12 @@
 // Part 1 calls configureApi({ db, getUserId }) once (e.g. in apps/web/lib/api.ts) with its Better Auth session lookup.
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { agentRuns, messages, runSteps, user, plans, planDecisions, type Db } from '@hacktx/db';
 import { City, Interval, PrivateFactValue, type ActorContext } from '@hacktx/contracts';
 import {
-  AGENT_HANDLE, AppError, activeTally, assertMember, closePlan, parseCity, enqueue, open, seal, webConversation, createPlan, listOwnFacts, listPlans, publicPlan, recordDecision, recordVote,
-  savePrivateFact, updateParticipants,
+  AGENT_HANDLE, AppError, activeTally, assertMember, closePlan, parseCity, enqueue, open, webConversation, createPlan, listOwnFacts, listPlans, publicPlan, recordDecision, recordVote,
+  savePrivateFact, updateParticipants, readPlanChat, postPlanChat,
 } from '@hacktx/core';
 import { templates, loadTemplate, saveTemplate } from '@hacktx/templates';
 import { setBuyer, createMuse, createDrop, listDrops, editDrop, findCommonGround, getGroundDraft, attachGround, planGround, readQuest, generateQuest, completeQuestChallenge, describePhoto, transcribeVoice, createQuestArt, loadPublicDemo } from '@hacktx/agent';
@@ -143,7 +143,7 @@ export const postClose = route(async ({ req, db, actor, params }) => {
 export const getPrivate = route(async ({ db, actor, params }) => {
   const facts = await listOwnFacts(db, actor, params.id!);
   const thread = await webConversation(db, params.id!, 'private', actor.userId);
-  const rows = await db.select().from(messages).where(eq(messages.conversationId, thread.id)).orderBy(asc(messages.occurredAt));
+  const rows = await db.select().from(messages).where(and(eq(messages.conversationId, thread.id), eq(messages.planId, params.id!))).orderBy(asc(messages.occurredAt));
   return { data: {
     ownerUserId: actor.userId,
     facts: facts.map((f) => ({ id: f.id, kind: f.kind, value: f.value })),
@@ -245,32 +245,12 @@ export const getStudioRuns = route(async ({ req, db, actor }) => {
 // ---------- web chat (supporting UI and the fallback if messaging-provider access fails) ----------
 /** Post to the plan's web group thread or your own private web thread; the agent replies asynchronously. */
 export const postMessage = route(async ({ req, db, actor, params, requestId }) => {
-  const b = await body(req, z.object({ text: z.string().trim().min(1).max(1000), scope: z.enum(['group', 'private']) }));
-  await assertMember(db, params.id!, actor.userId);
-  const conv = await webConversation(db, params.id!, b.scope, actor.userId);
-  const isPrivate = b.scope === 'private';
-  const [row] = await db.insert(messages).values({
-    conversationId: conv.id, providerMessageId: `web:${requestId}`, senderUserId: actor.userId, senderHandle: `web:${actor.userId}`,
-    isPrivate, body: isPrivate ? null : b.text, bodyEnc: isPrivate ? seal('message', b.text) : null, occurredAt: new Date(),
-  }).returning({ id: messages.id });
-  await enqueue(db, { kind: 'process_inbound', planId: params.id!, dedupeKey: `web:${row!.id}`, payload: { web: { messageId: row!.id } } });
-  return { data: { messageId: row!.id } };
+  const b = await body(req, z.object({ text: z.string().trim().min(1).max(1000), scope: z.enum(['group', 'private']), destination: z.enum(['website', 'linked_chat']).default('website') }));
+  return { data: await postPlanChat(db, actor, { ...b, planId: params.id!, requestId }) };
 });
 
 /** The plan's web group thread plus the caller's own private thread. Poll this every ~2 s while waiting for a reply. */
 export const getMessages = route(async ({ db, actor, params }) => {
-  await assertMember(db, params.id!, actor.userId);
-  const threads = [await webConversation(db, params.id!, 'group', actor.userId), await webConversation(db, params.id!, 'private', actor.userId)];
-  const rows = await db.select().from(messages).where(inArray(messages.conversationId, threads.map((t) => t.id))).orderBy(asc(messages.occurredAt));
-  const names = new Map((await db.select({ id: user.id, name: user.name }).from(user)
-    .where(inArray(user.id, [...new Set(rows.map((r) => r.senderUserId).filter(Boolean) as string[]), actor.userId]))).map((u) => [u.id, u.name]));
-  return {
-    data: rows.map((r) => ({
-      id: r.id,
-      scope: r.isPrivate ? 'private' : 'group',
-      from: r.senderHandle === AGENT_HANDLE ? 'agent' : r.senderUserId ? { id: r.senderUserId, name: names.get(r.senderUserId) ?? 'member' } : 'unknown',
-      text: r.body ?? open('message', r.bodyEnc!),
-      at: r.occurredAt.toISOString(),
-    })),
-  };
+  return { data: (await readPlanChat(db, actor, params.id!)).messages };
 });
+export const getChat = route(async ({ db, actor, params }) => ({ data: await readPlanChat(db, actor, params.id!) }));

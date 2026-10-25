@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 test.beforeEach(async ({ page }) => {
+  await page.route(/\/api\/plans\/[^/]+\/chat$/, route => route.fulfill({ json: { data: { messages: [], linkedGroupChat: false } } }));
   await page.route(/\/api\/plans\/[^/]+\/(quest|common-ground)$/, route => route.fulfill({ json: { data: null } }));
 });
 const city = {
@@ -293,7 +294,7 @@ test("private details stay on private route, send privately, and hide a foreign 
   await expect(
     page.getByText("My private constraint", { exact: true }),
   ).toBeVisible();
-  await page.getByLabel("Private note for the planner").fill("Home by ten");
+  await page.getByLabel("Tell Sid privately").fill("Home by ten");
   await page.getByRole("button", { name: "Send privately" }).click();
   await expect(page.getByRole("status")).toContainText("Private message saved");
   expect(received).toEqual({

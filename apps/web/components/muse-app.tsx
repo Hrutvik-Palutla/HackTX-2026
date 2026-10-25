@@ -12,10 +12,12 @@ import { AppShell, PageHeading } from "./app-shell";
 import { PlanNavigation } from "./plan-navigation";
 import { Feedback } from "./feedback";
 import { PreviewApp } from "./preview-app";
+import { PlanChatPanel } from './plan-chat-panel';
 import { DropNotebook, CommonGroundPicker, QuestPanel, RecipeEditor, type Ground } from "./standout-panel";
 import { api, accountApi, ApiError } from "@/lib/api";
 import {
   money,
+  planStatusLabel,
   safeUrl,
   type PlanView,
   type PrivateView,
@@ -337,7 +339,7 @@ export function MuseApp({
       view={view}
       footer={
         status === "ready" ? (
-          <Link href="/studio">Team Studio →</Link>
+          <Link href="/try">Try the example →</Link>
         ) : undefined
       }
     >
@@ -369,16 +371,14 @@ export function MuseApp({
             <section className="panel empty-state">
               <h2>Accounts are not connected yet</h2>
               <p>
-                Live sign-in is unavailable right now. You can explore the
-                sample workspace while the service is being connected.
+                Sign-in is unavailable right now. Try the example without a phone number.
               </p>
-              <Link className="button" href="/plans?preview=1">
-                Open sample workspace
+              <Link className="button" href="/try">
+                Try an example
               </Link>
             </section>
           ) : status === "signed-out" || (authView && status !== "ready") ? (
             <>
-              <p>Sign in with your phone to see your plans and friends.</p>
               <form className="form-panel" onSubmit={signIn}>
                 <Field label="Phone number">
                   <input
@@ -439,8 +439,9 @@ export function MuseApp({
               <p className="hint">
                 Codes expire after five minutes. Never share yours.
               </p>
-              <Link className="back" href="/plans?preview=1">
-                View sample workspace →
+              <p className="hint">Your phone identifies you to your friends. It isn’t needed to try the example.</p>
+              <Link className="back" href="/try">
+                Try an example without signing in →
               </Link>
             </>
           ) : onboarding || view === "settings" || authView ? (
@@ -606,7 +607,7 @@ export function MuseApp({
                         <Field label="What would you like to do?">
                           <textarea
                             required
-                            maxLength={2000}
+                            maxLength={500}
                             value={request}
                             onChange={(e) => setRequest(e.target.value)}
                             placeholder="Movie on Friday in Austin"
@@ -789,15 +790,13 @@ export function MuseApp({
                   <PlanNavigation id={id!} view={view} />
                   <p>{plan.request}</p>
                   <p className="hint">
-                    {plan.status.replaceAll("_", " ")} · Revision{" "}
-                    {plan.revision} ·{" "}
+                    {planStatusLabel(plan.status)} ·{" "}
                     {plan.mode === "test"
-                      ? "TEST — no live purchase"
-                      : "Live plan"}
+                      ? "Test mode: no automatic purchases"
+                      : "Your group’s plan"}
                   </p>
                   {view === "detail" && (
                     <>
-                      <QuestPanel planId={id!} userId={session!.user.id} status={plan.status} />
                       <form
                         className="form-panel"
                         onSubmit={(e) => {
@@ -904,43 +903,13 @@ export function MuseApp({
                           ) : null;
                         })}
                       </section>
-                      <section className="panel">
-                        <h2>Group discussion</h2>
-                        <form
-                          className="form-panel"
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            void perform(async () => {
-                              await api(`${base}/messages`, {
-                                method: "POST",
-                                body: JSON.stringify({
-                                  text: note,
-                                  scope: "group",
-                                  expectedRevision: plan.revision,
-                                }),
-                              });
-                              setNote("");
-                              await loadData();
-                              setNotice("Message sent to the group.");
-                            });
-                          }}
-                        >
-                          <Field label="Message everyone">
-                            <textarea
-                              required
-                              maxLength={2000}
-                              value={note}
-                              onChange={(e) => setNote(e.target.value)}
-                            />
-                          </Field>
-                          <button disabled={busy}>Send to group</button>
-                        </form>
-                      </section>
+                      <PlanChatPanel planId={id!} />
+                      {['selected', 'quoting', 'awaiting_payment_approval', 'booking', 'needs_handoff', 'handoff', 'booked'].includes(plan.status) && <details><summary>Photo challenges and riddles (optional)</summary><QuestPanel planId={id!} userId={session!.user.id} status={plan.status} /></details>}
                     </>
                   )}
                   {view === "private" && privateView && (
                     <section className="panel">
-                      <h2>Only your account</h2>
+                      <h2>Private notes</h2>
                       {privateView.facts.length === 0 && (
                         <p>No private details recorded.</p>
                       )}
@@ -972,10 +941,10 @@ export function MuseApp({
                           });
                         }}
                       >
-                        <Field label="Private note for the planner">
+                        <Field label="Tell Sid privately">
                           <textarea
                             required
-                            maxLength={2000}
+                            maxLength={1000}
                             value={note}
                             onChange={(e) => setNote(e.target.value)}
                             placeholder="I need to leave by 10 PM."
@@ -1127,8 +1096,7 @@ export function MuseApp({
               {view === "studio" && (
                 <>
                   <p>
-                    Team-only run history. The Studio API enforces the team
-                    allowlist.
+                    Team access. Edit how Sid works; changes apply to the next run.
                   </p>
                   <section className="panel">
                     <h2>Templates</h2>

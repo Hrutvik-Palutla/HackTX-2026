@@ -8,7 +8,7 @@ import {
   AppError, WEB, checkSlot, enqueue, enqueueMessage, postToConversation, tally, loadFactsForFeasibility, loadMemberAvailability, publishVersion, setStatus,
   type OptionDraft, type SlotFit,
 } from '@hacktx/core';
-import { loadTemplate } from '@hacktx/templates';
+import { loadTemplate, PRODUCT_VOICE } from '@hacktx/templates';
 import { planGround } from './standout';
 import type { Muse } from './muse';
 import { LimitError, RunRecorder } from './recorder';
@@ -137,7 +137,7 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
       name: 'options',
       schema: Picks,
       messages: [
-        { role: 'system', content: `${template.systemInstruction}
+        { role: 'system', content: `${template.systemInstruction}\n${PRODUCT_VOICE}
 Pick up to 3 useful, distinct options from the candidates by id. For a candidate with startLocal=null, set startAt to an
 ISO 8601 UTC time inside the window that suits the activity; otherwise set startAt null. Explanation: one short sentence on the real difference versus the other options (format, time of day, listed price,
 location), using ONLY facts present in the candidate data; do not invent atmosphere, amenities or reviews. Title, time,

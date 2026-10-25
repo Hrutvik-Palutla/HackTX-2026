@@ -18,13 +18,11 @@ test('voice uploads normalize a normal 22050Hz recording into supported mono 160
 const city = { label: 'Austin, Texas, United States', countryCode: 'US', latitude: 30.27, longitude: -97.74, timeZone: 'America/Chicago' };
 const profile = { id: 'own', name: 'Alex', phoneE164: '+15125550100', phoneVerified: true, avatarUrl: null, city, interests: [], calendarConnected: false, onboardingComplete: true };
 const ground = { id: '11111111-1111-4111-8111-111111111111', theme: 'Night-sky photo walk', searchQuery: 'Austin stargazing photography walk', why: [{ id: 'chip1', name: 'Mel', ownerId: 'mel', label: 'Night photography', evidence: 'I love night photography', kind: 'interest', confirmed: true, shared: true }] };
-test('public recorded demo labels synthetic people and wraps long source links', async ({ page }) => {
-  await page.route('**/api/demo', route => route.fulfill({ json: { data: { recordedAt: '2026-10-25T05:00:00Z', ground, quest: null, runs: [], plan: { options: [{ id: 'o', label: 'A', title: 'A real sourced park', startAt: '2026-10-26T22:00:00Z', timeZone: city.timeZone, estimatedPerPerson: null, publicExplanation: 'An option in Austin.', uncertainties: ['Opening hours unverified'], sourceIds: ['s'] }], sources: [{ id: 's', url: 'https://example.com/park', title: 'Google Maps places for stargazing night sky viewing walk in a local park for night photography' }] } } } }));
+test('old demo link opens the no-account example', async ({ page }) => {
   await page.goto('/demo');
-  await expect(page.getByRole('heading', { name: ground.theme })).toBeVisible();
-  await expect(page.getByText('Read-only example', { exact: false })).toContainText('Synthetic friends');
-  await expect(page.getByRole('link', { name: /Google Maps places/ })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect(page).toHaveURL(/\/try$/);
+  await expect(page.getByRole('heading', {name: 'Friday after 6', exact: true})).toBeVisible();
+  await expect(page.getByText('Example group. Changes stay in this browser.', {exact:false})).toBeVisible();
 });
 async function app(page: Page, overrides: Record<string, (route: Route) => Promise<void>>) {
   await page.route('**/api/**', async route => {
@@ -32,7 +30,7 @@ async function app(page: Page, overrides: Record<string, (route: Route) => Promi
     const custom = overrides[`${route.request().method()} ${path}`];
     if (custom) return custom(route);
     if (path === '/api/auth/get-session') return route.fulfill({ json: { user: { id: profile.id, name: profile.name }, session: { id: 'test-session' } } });
-    const defaults: Record<string, unknown> = { '/api/me': profile, '/api/friends': { friends: [{ id: 'mel', name: 'Mel', avatarUrl: null }], requests: [] }, '/api/plans': [], '/api/drops': [], '/api/studio/runs': [], '/api/plans/p/messages': [] };
+    const defaults: Record<string, unknown> = { '/api/me': profile, '/api/friends': { friends: [{ id: 'mel', name: 'Mel', avatarUrl: null }], requests: [] }, '/api/plans': [], '/api/drops': [], '/api/studio/runs': [], '/api/plans/p/messages': [], '/api/plans/p/chat': {messages: [], linkedGroupChat: false} };
     return route.fulfill({ status: path in defaults ? 200 : 404, json: path in defaults ? { data: defaults[path] } : { error: { code: 'NOT_FOUND', message: 'Not found', retryable: false }, requestId: 'test' } });
   });
 }
@@ -56,7 +54,7 @@ test('common ground displays evidence and is bound to the created plan request',
   let created: any;
   await app(page, { 'POST /api/common-ground': async r => r.fulfill({ json: { data: ground } }), 'POST /api/plans': async r => { created = r.request().postDataJSON(); await r.fulfill({ json: { data: { id: 'p' } } }); } });
   await page.goto('/plans'); await page.getByLabel('Mel', { exact: true }).check();
-  await page.getByRole('button', { name: 'Find our thing', exact: true }).click();
+  await page.getByRole('button', { name: 'Find ideas', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Night-sky photo walk', exact: true })).toBeVisible();
   await expect(page.getByText('“I love night photography”')).toBeVisible();
   await page.getByRole('button', { name: 'Create plan', exact: true }).click();
@@ -79,7 +77,22 @@ test('Studio saves a new recipe version with edited instructions and limits', as
 test('quest completion is shown as shared persistent progress', async ({ page }) => {
   let quest = { id: 'q', title: 'Night explorers', runId: 'r', challenges: Array.from({ length: 5 }, (_, i) => ({ id: `c${i}`, title: `Challenge ${i}`, kind: i < 3 ? 'photo' : 'riddle', challenge: 'Find a pattern together', hint: 'Look around', completedBy: null as string | null, completedAt: null as string | null })) };
   await app(page, { 'GET /api/plans/p': async r => r.fulfill({ json: { data: { id: 'p', request: 'Night walk', status: 'selected', mode: 'test', revision: 0, activeVersionId: 'v', options: [], participants: [{ id: 'own', name: 'Alex', avatarUrl: null }], votes: [], sources: [] } } }), 'GET /api/plans/p/quest': async r => r.fulfill({ json: { data: quest } }), 'GET /api/plans/p/common-ground': async r => r.fulfill({ json: { data: ground } }), 'PATCH /api/plans/p/quest': async r => { const b = r.request().postDataJSON(); quest = { ...quest, challenges: quest.challenges.map(c => c.id === b.challengeId ? { ...c, completedBy: 'own', completedAt: '2026-10-25T05:00:00Z' } : c) }; await r.fulfill({ json: { data: quest } }); } });
-  await page.goto('/plans/p'); await expect(page.getByText('0 / 5 complete')).toBeVisible();
+  await page.goto('/plans/p'); await page.getByText('Photo challenges and riddles (optional)', {exact:true}).click(); await expect(page.getByText('0 / 5 complete')).toBeVisible();
   await page.getByLabel('We did this').first().click();
   await expect(page.getByText('1 / 5 complete')).toBeVisible(); await expect(page.getByLabel('Completed by you')).toBeChecked();
+});
+
+test('the plan shows linked chat, keeps private notes out of the group and requires an explicit send destination', async ({ page }) => {
+  let posted: any;
+  const chat = { linkedGroupChat: true, messages: [{ id: 'one', scope: 'group', from: { id: 'mel', name: 'Mel' }, text: 'Hello from Messages', at: '2026-10-25T05:00:00Z', source: 'messages', deliveryStatus: null }, { id: 'private', scope: 'private', from: { id: 'own', name: 'Alex' }, text: 'Private note must not appear in group', at: '2026-10-25T05:00:00Z', source: 'website', deliveryStatus: null }] };
+  await app(page, { 'GET /api/plans/p': async r => r.fulfill({ json: { data: { id: 'p', request: 'Friday plan', status: 'voting', mode: 'test', revision: 0, activeVersionId: 'v', options: [], participants: [], votes: [], sources: [] } } }), 'GET /api/plans/p/chat': async r => r.fulfill({ json: { data: chat } }), 'POST /api/plans/p/messages': async r => { posted = r.request().postDataJSON(); await r.fulfill({ json: { data: { messageId: 'new' } } }); } });
+  await page.goto('/plans/p');
+  await expect(page.getByLabel('Group messages')).toContainText('Hello from Messages');
+  await expect(page.getByText('Private note must not appear in group')).toHaveCount(0);
+  await expect(page.getByRole('radio', { name: 'Website', exact: true })).toBeChecked();
+  await page.getByLabel('Message the group', { exact: true }).fill('Sid, move it to 7');
+  await page.getByRole('radio', { name: 'Linked Messages group', exact: true }).check();
+  await page.getByRole('button', { name: 'Send to linked group', exact: true }).click();
+  await expect.poll(() => posted?.destination).toBe('linked_chat'); expect(posted.scope).toBe('group');
+  await expect(page.getByText('Queued for the linked Messages group.', { exact: true })).toBeVisible();
 });

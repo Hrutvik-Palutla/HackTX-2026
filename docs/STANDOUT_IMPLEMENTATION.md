@@ -1,5 +1,7 @@
 # Standout implementation and release
 
+**Draft branch note (October 25):** `design/chat-first-preview` is not deployed. It replaces the user-facing recorded-demo page with one interactive browser-only example at `/try`, simplifies wording and adds scoped website/Messages chat. The proposed visual theme is an image pending approval. Its additive `0001` migration is included but has not been applied to production. See [the branch review](design/CHAT_FIRST_REVIEW.md). The table below records the earlier release evidence; it is not a new live verification.
+
 The original internal proposal remains outside version control. This checklist describes what is implemented and verified in the application.
 
 | Item | Implementation and evidence |
