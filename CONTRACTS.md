@@ -1,5 +1,15 @@
 # Shared Technical Contracts
 
+## Optional Snowflake conversation recap — local review branch
+
+- `POST /api/plans/:id/chat/recap` takes exactly `{consent: true, messageIds: UUID[]}` (1–20 distinct IDs). It uses the existing verified session, same-origin mutation guard and `readPlanChat` membership/plan scope checks. Only selected visible group messages qualify; private, unscoped, foreign-plan and out-of-window history is rejected before a provider call. Maximum combined text is 12,000 characters.
+- The server calls Snowflake Cortex Chat Completions once, with a 25-second timeout, no redirects/retries, 1,200 output-token limit, and strict structured output. Actual author/account IDs and metadata are omitted; message IDs use per-request aliases. Selected message bodies themselves are sent only after the UI's explicit confirmation. Users must not select sensitive information.
+- Result: advisory `items[{kind: idea|concern|question, text, evidence[{messageId,quote}]}]`, plus actual usage, provider/model/request/run IDs, generation time and plan revision. Every evidence ID must resolve to submitted text and every quote must be a verbatim substring. Recheck membership/revision after inference. The recap cannot alter votes, constraints, selection, payment, calendars or outgoing messages.
+- Eight lifetime attempts per account, reserved under the existing user-row lock in encrypted `private_facts` records of internal kind `snowflake_recap_usage`. Failures count; missing configuration and invalid evidence selections do not. Recap text is not persisted or reused as group memory. Existing private-fact readers filter this internal kind. Tiger remains the operational store; no new schema migration/service or Snowflake warehouse is added.
+- Existing `agent_runs`/`run_steps` record actual model, tokens, elapsed time and a text-free outcome. `snowflake-recap` cost is unavailable and excluded from Spark's dollar estimate. This fixed prompt v1 is not a Studio-editable recipe. No raw prompt, response, PAT, phone number or calendar metadata is logged.
+- Server-only config: `SNOWFLAKE_ACCOUNT_URL`, `SNOWFLAKE_PAT`, optional `SNOWFLAKE_CORTEX_MODEL` (default `llama3.1-8b`). Account origin must be HTTPS under `snowflakecomputing.com`; no client-supplied destination/credentials. Not configured means an explicit unavailable state while normal chat/planning continue.
+- Integration owner must configure a restricted credential and perform a live synthetic acceptance call before claiming Snowflake is used/deployed. No production migration, credential or deployment is performed by this implementation.
+
 ## Chat-first UX branch — preliminary; not deployed
 
 - Additive migration `0001_simple_shooting_star`: nullable `messages.plan_id` plus a plan/time index. Baseline remains unchanged. Do not apply this to production until the branch is reviewed. No provider history is backfilled by guessing from a conversation's current plan.

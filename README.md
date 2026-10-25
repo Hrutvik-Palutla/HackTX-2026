@@ -23,6 +23,14 @@ Text notes, manual availability, web chat, and ICS calendar downloads remain ava
 
 ## Run locally
 
+### Optional conversation recap (Snowflake)
+
+The `feature/snowflake-recap` review branch adds **Catch up on the conversation** inside plan chat. Select group messages, confirm sending their text to Snowflake Cortex, and get ideas, concerns and questions with quote links. A recap does not approve or change a plan and is not retained as group memory. Private threads are excluded server-side.
+
+Configure server-only `SNOWFLAKE_ACCOUNT_URL`, `SNOWFLAKE_PAT`, and optionally `SNOWFLAKE_CORTEX_MODEL` in ignored `.env.local`. The integration uses the [official Cortex Chat Completions API](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api), not a second application database. Use a role restricted to Cortex access, not ACCOUNTADMIN. Snowflake's [PAT setup](https://docs.snowflake.com/en/user-guide/programmatic-access-tokens) documents role/network restrictions. No credentials are included in this branch.
+
+Run `node --env-file-if-exists=.env.local --import=tsx scripts/snowflake-smoke.ts` for one live synthetic inference with no app database, text delivery, calendar write or purchase. It reports actual provider usage, never token values. Local mocked checks do not establish live Snowflake access or prize eligibility. See `STATUS.md` for the verified state.
+
 Use Node **24.22.1** and pnpm **10.34.8**. Copy the privately supplied `.env.team` to `.env`, or fill the placeholders in `.env.example`. Real keys and the team file are Git-ignored.
 Web dev/start and the worker automatically load the root `.env` and optional `.env.local`; externally supplied environment variables retain precedence. Local workers do not open the production Claw listener. The hosted worker is the sole production listener. For a real local iMessage run, `live-agent.ts` requires a separate Claw account, `CLAW_DEV_MESSENGER_API_KEY`, `CLAW_DEV_MESSENGER_FROM_PHONE`, and `LIVE_AGENT_ALLOW_CLAW_LISTENER=true`; another API key in the production Claw account is not isolated.
 

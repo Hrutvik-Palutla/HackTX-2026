@@ -12,6 +12,7 @@ import {
   savePrivateFact, updateParticipants, readPlanChat, postPlanChat,
 } from '@hacktx/core';
 import { templates, loadTemplate, saveTemplate } from '@hacktx/templates';
+import { recapPlanChat } from '@hacktx/agent';
 import { setBuyer, createMuse, createDrop, listDrops, editDrop, findCommonGround, getGroundDraft, attachGround, planGround, readQuest, generateQuest, completeQuestChallenge, describePhoto, transcribeVoice, createQuestArt, loadPublicDemo } from '@hacktx/agent';
 
 type Cfg = { db: Db; getUserId(req: Request): Promise<string | null>; appOrigin?: string; teamUserIds?: string[] };
@@ -233,8 +234,8 @@ export const getStudioRuns = route(async ({ req, db, actor }) => {
     data: runs.map((r) => ({
       ...r,
       startedAt: r.startedAt.toISOString(),
-      costKnown: !['voice-input', 'quest-art'].includes(r.task),
-      summary: `${r.task} · ${r.templateId} v${r.templateVersion} · ${r.inputTokens + r.outputTokens} tokens · ${['voice-input', 'quest-art'].includes(r.task) ? 'Provider cost unavailable (excluded from Spark total)' : `~$${Number(r.estimatedCostUsd).toFixed(4)}`}${r.error ? ` · ${r.error}` : ''}`,
+      costKnown: !['voice-input', 'quest-art', 'snowflake-recap'].includes(r.task),
+      summary: `${r.task} · ${r.templateId} v${r.templateVersion} · ${r.inputTokens + r.outputTokens} tokens · ${['voice-input', 'quest-art', 'snowflake-recap'].includes(r.task) ? 'Provider cost unavailable (excluded from Spark total)' : `~$${Number(r.estimatedCostUsd).toFixed(4)}`}${r.error ? ` · ${r.error}` : ''}`,
       mode: 'test' as const, // no live purchases are made by agent runs
       estimatedCostUsd: Number(r.estimatedCostUsd),
       steps: steps.filter((s) => s.runId === r.id).sort((a, b) => a.index - b.index).map((s) => ({ ...s, estimatedCostUsd: Number(s.estimatedCostUsd) })),
@@ -254,3 +255,8 @@ export const getMessages = route(async ({ db, actor, params }) => {
   return { data: (await readPlanChat(db, actor, params.id!)).messages };
 });
 export const getChat = route(async ({ db, actor, params }) => ({ data: await readPlanChat(db, actor, params.id!) }));
+
+export const postChatRecap = route(async ({ req, db, actor, params }) => {
+  const input = await body(req, z.object({ consent: z.literal(true), messageIds: z.array(z.string().uuid()).min(1).max(20) }).strict());
+  return { data: await recapPlanChat(db, actor, params.id!, input.messageIds) };
+});

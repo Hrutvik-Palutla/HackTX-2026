@@ -2,6 +2,14 @@
 
 Each owner keeps their own section current: status, files, what actually works + the check run, blockers, next action.
 
+## Snowflake conversation recap — ready for review (October 25)
+
+- **Owner:** Snowflake integration agent; branch `feature/snowflake-recap`, based on chat-first preview `a9a484f`. User authorized pushing only Snowflake work. No redesign or design-handoff prompt is included in this commit.
+- **Files:** Cortex client/recap service and export, guarded `/chat/recap` route, existing chat-panel integration and four scoped CSS rules, usage/cost labeling, env placeholders, smoke script, API/browser tests, README and contracts.
+- **Working under controlled checks:** explicit message selection and consent; member-only scoped group text; private/foreign/unscoped history excluded; quote/ID validation; bounded requests; revision recheck; redacted real-run metadata; no changes to votes/plans or outgoing messages. Recaps remain ephemeral. Tiger remains the operational store.
+- **Checks:** 118 backend tests, root/web TypeScript and production build passed. Full production-build browser run passed 42 checks on desktop/mobile, including the recap flow and two design-capture checks; those unrelated capture checks were then removed from the Snowflake-only patch. No dependencies or migrations added.
+- **Blocker / next action:** integration owner supplies a restricted server-only Snowflake PAT/account URL in ignored configuration and runs `scripts/snowflake-smoke.ts` for one synthetic inference, then verifies a consenting group. Account UI sign-in was observed, but no API credential or live Cortex response was verified. No production deployment, real user-message export, calendar write or purchase occurred.
+
 ## Group-chat recovery fixes — October 25
 
 - On top of `eae4bac`: source-backed movie page extraction with bounded requests, honest unknown-time theater choices, private decline notifications, organizer-only remove/close tools, and buyer-confirmed unpurchased handoff cancellation before replanning. Unknown-time choices cannot become bookings or calendar events.
