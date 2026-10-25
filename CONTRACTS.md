@@ -3,7 +3,7 @@
 ## Standout integration addendum — October 25
 
 - `GET /api/demo` is a read-only public fixture, not an authentication bypass: only a selected test-mode plan from `sidequest_demo_alex` qualifies; every member must have a `sidequest_demo_` ID, `@demo.sidequest.invalid` email and no phone. No arbitrary plan ID is accepted. The UI labels synthetic people, recorded provider results and simulated completions. Tests reject real phones or email addresses in that fixture.
-- `POST /api/plans/:id/buyer` lets a verified member volunteer only themselves for the current decision, with `expectedRevision`. A different existing buyer cannot be replaced through this endpoint. Part 4 uses the same verified session/membership and current selected plan, with a Postgres repository. Direct wallet purchasing is disabled; sourced merchant handoff is explicit and does not claim a reservation.
+- `POST /api/plans/:id/buyer` lets a verified member volunteer only themselves for the current decision, with `expectedRevision`. A different existing buyer cannot be replaced through this endpoint. Web and chat self-confirmation share the same row lock, current revision, attendee checks and unresolved-purchase guard; changing buyer advances the revision. Part 4 uses the same verified session/membership and current selected plan, with a Postgres repository. The web and worker share the encrypted wallet adapter and selected-plan loader. Direct purchasing requires a configured merchant quote and driver; the default is explicit sourced merchant handoff without claiming a reservation.
 - Browser voice uploads decode/resample to mono PCM16 WAV at 16 kHz. The server validates RIFF chunks, PCM16, mono, 16/24 kHz, duration <=120 seconds and <=8 MB before the Meta request. Text is the fallback. Image/voice provider costs are explicitly unknown and excluded from Spark cost estimates.
 - Quest JSON returns an image URL instead of repeatedly transferring inline PNG data during progress polling. `GET /api/plans/:id/quest/art` requires the same verified membership and exact current version/option. The public synthetic fixture uses its separately guarded image endpoint.
 
@@ -14,7 +14,7 @@
 - `GET/PUT /api/studio/templates/:id`: team allowlist enforced on the server. PUT carries `expectedVersion`, instructions, allowed tools, and limits; concurrent saves reject stale versions. `TEAM_ADMIN_PHONES` may designate teammates, but only after a verified session proves phone ownership.
 - Optional media: `POST /api/drops/photo` accepts an inline PNG/JPEG/WebP under 1 MB; no remote URL is fetched. `POST /api/drops/voice` accepts a WAV under 8 MB. Both return a private draft for owner review, not automatically shared facts. `POST /api/plans/:id/quest/art` generates and caches a PNG card for the current quest. Each account has eight optional media requests in this hackathon build. Voice/Image costs unavailable from those endpoints are explicitly labeled and excluded from the Spark estimate.
 - Storage reuses encrypted `private_facts` with internal kinds `interest_drop`, `common_ground`, `quest`, and `media_usage`. These internal records never enter the existing private-constraint parser or another user's private API response. No new database service or schema migration is needed.
-- Plan selection now requires **all current participants** to have an acceptable vote for the same option/version. It cannot silently drop a participant. Vote updates and decisions lock the plan row to serialize competing decisions and approval changes. Explicit roster edits remain the existing organizer action.
+- Plan selection records an explicit attendee list established by chat evidence. Silent holdouts do not force unanimous votes; the agent asks when attendance or objections remain unclear. Vote updates and decisions lock the plan row. Selection never authorizes payment.
 - Calendar writes check membership and current selected version, recheck the caller's current busy intervals, and reject conflicts or unavailable verification. Retrying an already-synced version returns its existing event ID. ICS remains the manual-review fallback; creation never implies a reservation.
 - Deployment includes the Node 24 worker under Compose's `live` profile, encrypted GitHub runtime settings, preserved server environment/certificate volumes, and revision-bearing `/health/live` plus database `/health/ready` checks. Secrets remain outside source control.
 
@@ -318,7 +318,7 @@ Conflict rules: stale revision/version returns `409 STALE_PLAN`; unauthorized ac
 
 ```ts
 type InboundMessage = {
-  provider: 'linq' | 'telegram';
+  provider: 'linq' | 'telegram' | 'claw_messenger';
   eventId: string;
   messageId: string;
   conversationExternalId: string;
@@ -333,7 +333,8 @@ type InboundMessage = {
 type OutboundRecipient =
   | { kind: 'group'; conversationId: Id }
   | { kind: 'private'; userId: Id; conversationId?: Id }
-  | { kind: 'invite'; invitationId: Id }; // only connection/onboarding content
+  | { kind: 'invite'; invitationId: Id } // only connection/onboarding content
+  | { kind: 'otp_phone'; phoneEnc: string }; // OTP to a not-yet-registered phone; encrypted
 
 interface MessagingPort {
   capabilities: {

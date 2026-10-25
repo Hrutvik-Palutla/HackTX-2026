@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { NextConfig } from "next";
 const config: NextConfig = {
+  serverExternalPackages: ["playwright", "playwright-core", "@stripe/link-cli"],
   transpilePackages: [
     "@muse/accounts",
     "@hacktx/api",

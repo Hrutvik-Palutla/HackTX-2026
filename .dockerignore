@@ -16,3 +16,5 @@ test-results
 apps/web/tests
 docs
 .vultr-private
+
+**/.part4-data

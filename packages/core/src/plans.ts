@@ -178,10 +178,6 @@ export async function recordDecision(
     const members = new Set(parts.map((p) => p.userId).filter(Boolean) as string[]);
     const attendees = [...new Set(input.attendeeUserIds)];
     if (!attendees.length || attendees.some((a) => !members.has(a))) throw invalid('Attendees must be plan participants');
-    if (attendees.length !== members.size) throw invalid('Keep every current group member in the decision. Update the roster explicitly first.');
-    const approvals = await tx.select({ userId: votes.userId }).from(votes).where(and(eq(votes.versionId, input.versionId), eq(votes.optionId, input.optionId)));
-    const approved = new Set(approvals.map(v => v.userId));
-    if (attendees.some(id => !approved.has(id))) throw invalid('Everyone must mark this option acceptable before it can be chosen.');
 
     if (input.evidenceMessageIds.length) {
       const ev = await tx.select({ id: messages.id }).from(messages)

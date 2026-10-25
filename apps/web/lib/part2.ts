@@ -10,7 +10,6 @@ import { configurePart4 } from './part4';
 const registry = globalThis as typeof globalThis & { hacktxPart2Ready?: boolean };
 export function ensurePart2() {
   if (registry.hacktxPart2Ready || !process.env.DATABASE_URL) return;
-  registry.hacktxPart2Ready = true;
   const { db, pool } = createDb();
   const teamUserIds = (process.env.TEAM_ADMIN_USER_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean);
   const teamPhones = new Set((process.env.TEAM_ADMIN_PHONES ?? '').split(',').map(s => s.trim()).filter(Boolean));
@@ -35,10 +34,11 @@ export function ensurePart2() {
     getUserId,
     teamUserIds,
   });
-  configureFriendshipAccepted(async (tx, { inviterId, recipientId }) => {
+  configureFriendshipAccepted(async (tx, { inviterId, recipientId, invitationId }) => {
     await tx.query(
       "INSERT INTO jobs (kind, dedupe_key, payload) VALUES ('resume_connections', $1, $2) ON CONFLICT (dedupe_key) DO NOTHING",
-      [`resume:${inviterId}:${recipientId}`, JSON.stringify({ userIds: [inviterId, recipientId] })],
+      [`resume:${invitationId}`, JSON.stringify({ userIds: [inviterId, recipientId] })],
     );
   });
+  registry.hacktxPart2Ready = true;
 }

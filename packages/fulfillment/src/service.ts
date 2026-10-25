@@ -11,7 +11,7 @@ import { createReimbursements, normalizePayPalMeHandle, buildPayPalMePaymentUrl,
 export type SelectedPlan = {
   planId: string; revision: number; versionId: string; optionId: string; title: string;
   memberUserIds: string[]; attendeeUserIds: string[]; buyerUserId: string | null;
-  mode: Mode; candidate: Candidate;
+  mode: Mode; candidate: Candidate | null; selectionReady?: boolean;
   privateMaximumShares?: Record<string, Money>;
 };
 export type FulfillmentOptions = {
@@ -63,6 +63,7 @@ export class FulfillmentService {
 
   async createQuote(actor: ActorContext, input: { planId: string; versionId: string; optionId: string; buyerUserId: string; expectedRevision: number; requestId: string; seatPreference?: string }): Promise<BookingQuote> {
     let plan = await this.plan(actor, input.planId);
+    assert(plan.selectionReady !== false, 'SELECTION_REQUIRED', 'Choose a sourced option and attendees before checkout.', 409);
     this.revision(plan, input.expectedRevision, input.versionId);
     assert(plan.optionId === input.optionId && plan.buyerUserId === input.buyerUserId, 'STALE_PLAN', 'The selected option or buyer changed.', 409);
     assert(plan.buyerUserId && plan.attendeeUserIds.includes(plan.buyerUserId), 'BUYER_REQUIRED', 'Nominate a buyer from the attendees first.');
@@ -105,6 +106,7 @@ export class FulfillmentService {
     const row = await this.repository.read(s => s.quotes[quoteId]);
     assert(row, 'NOT_FOUND', 'Quote not found.', 404);
     const plan = await this.plan(actor, row.quote.planId);
+    assert(plan.selectionReady !== false, 'SELECTION_REQUIRED', 'Choose a sourced option and attendees before checkout.', 409);
     this.revision(plan, expectedRevision, row.quote.versionId);
     assert(row.inputRevision === expectedRevision && row.quote.optionId === plan.optionId && row.quote.buyerUserId === plan.buyerUserId && row.quote.mode === plan.mode && sameSet(row.quote.attendeeUserIds, plan.attendeeUserIds), 'STALE_PLAN', 'The selected attendees, buyer, or option changed.', 409);
     validateQuote(row.quote, this.now()); this.checkMaximumShares(plan, row.quote);
@@ -199,6 +201,7 @@ export class FulfillmentService {
 
   async handoff(actor: ActorContext, planId: string, expectedRevision: number): Promise<{ booking: BookingResult; handoffUrl: string | null }> {
     const plan = await this.plan(actor, planId); this.revision(plan, expectedRevision);
+    assert(plan.selectionReady !== false, 'SELECTION_REQUIRED', 'Choose a sourced option and attendees before checkout.', 409);
     assert(plan.buyerUserId, 'BUYER_REQUIRED', 'Nominate the buyer before checkout.'); this.buyer(actor, plan.buyerUserId);
     const booking = await this.repository.transact(s => {
       const prior = Object.values(s.bookings).find(b => b.planId === planId && b.versionId === plan.versionId && b.status === 'handoff_required');
@@ -207,7 +210,7 @@ export class FulfillmentService {
       const record = { id: randomUUID(), planId, versionId: plan.versionId, quoteId: null, authorizationId: null, status: 'handoff_required' as const, merchantOrderRef: null, confirmationUrl: null, actualTotal: null, mode: plan.mode, buyerUserId: plan.buyerUserId!, attendeeUserIds: plan.attendeeUserIds };
       s.bookings[record.id] = record; return record;
     });
-    return { booking, handoffUrl: safeMerchantUrl(plan.candidate.bookingUrl) };
+    return { booking, handoffUrl: safeMerchantUrl(plan.candidate?.bookingUrl ?? null) };
   }
 
   async reportCompleted(actor: ActorContext, bookingId: string, input: { total: Money; orderReference: string; expectedRevision: number; shares?: AttendeeShare[]; buyerPayPalMe?: string | null }): Promise<BookingResult> {
@@ -308,15 +311,16 @@ export class FulfillmentService {
       const rows = Object.values(s.reimbursements).filter(r => ids.has(r.bookingId));
       if (actor.userId === plan.buyerUserId) return {
         viewerUserId: actor.userId, buyerUserId: plan.buyerUserId,
+        selectionReady: plan.selectionReady !== false, versionId: plan.versionId, optionId: plan.optionId,
         ownShare: rows.find(r => r.payerUserId === actor.userId) ?? null,
         buyerLedger: rows.filter(r => r.recipientUserId === actor.userId),
         booking: bookings.at(-1) ?? null,
-        quote: Object.values(s.quotes).filter(q => q.quote.planId === planId && q.quote.buyerUserId === actor.userId).at(-1)?.quote ?? null,
+        quote: Object.values(s.quotes).filter(q => q.quote.planId === planId && q.quote.versionId === plan.versionId && q.quote.optionId === plan.optionId && q.quote.buyerUserId === actor.userId).at(-1)?.quote ?? null,
         role: 'buyer', mode: plan.mode, bookings,
         quotes: Object.values(s.quotes).filter(q => q.quote.planId === planId && q.quote.buyerUserId === actor.userId).map(q => q.quote),
         authorizations: Object.values(s.authorizations).filter(a => s.quotes[a.quoteId]?.quote.planId === planId && a.buyerUserId === actor.userId).map(({ requestedBindingHash: _private, ...value }) => value),
         reimbursements: rows.filter(r => r.recipientUserId === actor.userId),
-        handoffUrl: safeMerchantUrl(plan.candidate.bookingUrl),
+        handoffUrl: safeMerchantUrl(plan.candidate?.bookingUrl ?? null),
         repaymentNeedsReview: bookings.filter(b => SUCCESS.has(b.status) && (b.attendeeUserIds ?? plan.attendeeUserIds).some(id => id !== actor.userId) && !rows.some(r => r.bookingId === b.id)).map(b => b.id),
       };
       return { viewerUserId: actor.userId, buyerUserId: plan.buyerUserId, ownShare: rows.find(r => r.payerUserId === actor.userId) ?? null, booking: bookings.length ? { status: bookings.at(-1)!.status, mode: bookings.at(-1)!.mode, actualTotal: null } : null, role: 'attendee', mode: plan.mode, reimbursements: rows.filter(r => r.payerUserId === actor.userId), bookingStatus: bookings.map(b => ({ id: b.id, status: b.status, mode: b.mode })) };

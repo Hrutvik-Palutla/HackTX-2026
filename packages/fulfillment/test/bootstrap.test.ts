@@ -49,7 +49,7 @@ test('production bootstrap defaults to test mode and leaves quote-less deploymen
     }), (error: unknown) => error instanceof Error && 'code' in error && error.code === 'HANDOFF_REQUIRED');
     const handoff = await part4.service.handoff(actor, plan.planId, plan.revision);
     assert.equal(handoff.booking.status, 'handoff_required');
-    assert.equal(handoff.handoffUrl, plan.candidate.bookingUrl);
+    assert.equal(handoff.handoffUrl, plan.candidate?.bookingUrl);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -4,6 +4,8 @@ import {
   accountService,
   normalizePhone,
   AccountError,
+  decryptPhone,
+  encryptPhone,
   type AccountRepository,
   type Actor,
 } from "./index.js";
@@ -12,6 +14,17 @@ const actor: Actor = {
   phoneE164: "+15125550142",
   phoneVerified: true,
 };
+test("friend phone envelope decrypts with the canonical AAD and rejects tampering", () => {
+  const key = Buffer.alloc(32, 23);
+  const first = encryptPhone(actor.phoneE164, key);
+  const second = encryptPhone(actor.phoneE164, key);
+  assert.notEqual(first, second);
+  assert.equal(decryptPhone(first, key), actor.phoneE164);
+  assert.throws(() => decryptPhone(first, Buffer.alloc(32, 24)));
+  const tampered = Buffer.from(first, "base64");
+  tampered[12] = tampered[12]! ^ 1;
+  assert.throws(() => decryptPhone(tampered.toString("base64"), key));
+});
 function repository(): AccountRepository {
   return {
     getProfile: async () => null,

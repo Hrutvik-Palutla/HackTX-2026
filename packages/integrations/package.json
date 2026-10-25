@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./fulfillment": "./fulfillment.ts",
     "./serpapi": "./serpapi.ts",
     "./link-wallet": "./link-wallet.ts",
     "./reimbursements": "./reimbursements.ts",
@@ -14,6 +15,8 @@
     "./messaging/otp": "./messaging/otp.ts"
   },
   "dependencies": {
+    "@muse/accounts": "workspace:*",
+    "@hacktx/agent": "workspace:*",
     "@hacktx/contracts": "workspace:*",
     "@hacktx/core": "workspace:*",
     "@hacktx/db": "workspace:*",

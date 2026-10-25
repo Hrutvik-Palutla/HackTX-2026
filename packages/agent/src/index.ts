@@ -6,3 +6,4 @@ export * from './discuss';
 export { fixtureDiscovery } from './fixtures';
 export * from './standout';
 export * from './media';
+export * from './fulfillment';

@@ -2,7 +2,7 @@
 // ciphertext from one column (e.g. OAuth token) cannot be replayed into another (e.g. private fact).
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
-export type Domain = 'private_fact' | 'message' | 'outbox' | 'oauth' | 'wallet' | 'phone';
+export type Domain = 'private_fact' | 'message' | 'outbox' | 'oauth' | 'wallet' | 'phone' | 'inbound';
 
 function key(): Buffer {
   const raw = process.env.APP_ENCRYPTION_KEY;

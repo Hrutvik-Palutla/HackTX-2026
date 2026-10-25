@@ -5,12 +5,12 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { eq } from 'drizzle-orm';
 import {
-  schema, migrationsFolder, conversations, externalEffects, inboundEvents, jobs, messages, messagingIdentities, outbox, plans,
+  schema, migrationsFolder, conversationMembers, conversations, planConversations, externalEffects, inboundEvents, jobs, messages, messagingIdentities, outbox, plans,
   planVersions, user, type Db,
 } from '@hacktx/db';
-import { enqueueMessage, type Job } from '@hacktx/core';
+import { enqueueMessage, open, type Job } from '@hacktx/core';
 import {
-  CLAW_PROVIDER, createPublishPollHandler, createSendOutboxHandler, formatTextPoll, ingestClawMessage, toInboundMessage,
+  CLAW_PROVIDER, GROUP_INTRO, createClawGroupCreator, createClawGroup, createPublishPollHandler, createSendOutboxHandler, formatTextPoll, ingestClawMessage, toInboundMessage,
 } from './claw-adapter.ts';
 import type { ClawInboundMessage, ClawSendResult, SendTarget } from './claw-messenger.ts';
 
@@ -67,7 +67,9 @@ describe('inbound', () => {
     const queued = await db.select().from(jobs).where(eq(jobs.kind, 'process_inbound'));
     expect(queued).toHaveLength(1);
     expect(queued[0]!.dedupeKey).toBe(`${CLAW_PROVIDER}:m1`);
-    expect(queued[0]!.payload).toMatchObject({ sendingLine: LINE, message: { provider: CLAW_PROVIDER, text: 'lets do friday' } });
+    expect(JSON.stringify(queued[0]!.payload)).not.toContain('lets do friday');
+    const decoded = JSON.parse(open('inbound', (queued[0]!.payload as { encryptedInbound: string }).encryptedInbound));
+    expect(decoded).toMatchObject({ sendingLine: LINE, message: { provider: CLAW_PROVIDER, text: 'lets do friday' } });
   });
 
   it('ignores messages from our own line', async () => {
@@ -179,3 +181,67 @@ describe('publish_poll', () => {
   });
 });
 
+
+describe('added to a group', () => {
+  it('says "How can I help?" once, on the first message from a new group', async () => {
+    const g = (id: string) => inbound({ messageId: id, chatId: 'chat-new', isGroup: true, participants: ['+15125550100', '+15125550101', LINE] });
+    await ingestClawMessage(db, LINE, g('g1'));
+    await ingestClawMessage(db, LINE, g('g2'));
+    const rows = await db.select().from(outbox);
+    expect(rows.map((r) => r.body)).toEqual([GROUP_INTRO]);
+    expect(GROUP_INTRO).toBe('How can I help?');
+    const [conv] = await db.select().from(conversations).where(eq(conversations.externalChatId, 'chat-new'));
+    expect(rows[0]!.recipient).toEqual({ kind: 'group', conversationId: conv!.id });
+    expect(await db.select().from(jobs).where(eq(jobs.kind, 'process_inbound'))).toHaveLength(2); // the request is still handled
+  });
+
+  it('does not greet private chats', async () => {
+    await ingestClawMessage(db, LINE, inbound());
+    expect(await db.select().from(outbox)).toHaveLength(0);
+  });
+
+  it('tracks members (excluding the agent) and who left', async () => {
+    await db.insert(messagingIdentities).values({ userId: 'u_alex', provider: CLAW_PROVIDER, handle: '+15125550100', kind: 'phone', verifiedAt: new Date() });
+    await ingestClawMessage(db, LINE, inbound({ messageId: 'a', chatId: 'c', isGroup: true, participants: ['+15125550100', '+15125550101', LINE] }));
+    await ingestClawMessage(db, LINE, inbound({ messageId: 'b', chatId: 'c', isGroup: true, participants: ['+15125550100', LINE] }));
+    const members = await db.select().from(conversationMembers);
+    expect(members.map((m) => [m.unresolvedHandle, m.isCurrent, !!m.messagingIdentityId]).sort()).toEqual([
+      ['+15125550100', true, true], ['+15125550101', false, false],
+    ]);
+  });
+});
+
+describe('createClawGroup', () => {
+  it('creates the chat by sending to every member and links it to the plan', async () => {
+    const [p] = await db.insert(plans).values({ organizerUserId: 'u_alex', request: 'movie', templateId: 'movie-night', city: austin, timeZone: 'America/Chicago', status: 'voting' }).returning();
+    const client = new FakeClient();
+    client.next = async () => ({ type: 'send.result', id: 'x', ok: true, status: 'accepted', messageId: 'pm', chatId: 'chat-made' });
+    const r = await createClawGroup(db, client, { sendingLine: LINE, memberHandles: ['+15125550100', '+15125550101'], introText: 'Hi all', planId: p!.id });
+    expect(client.sent[0]).toEqual({ target: { to: ['+15125550100', '+15125550101'] }, text: 'Hi all' });
+    const [link] = await db.select().from(planConversations);
+    expect(link).toMatchObject({ planId: p!.id, conversationId: r.conversationId, audience: 'group' });
+  });
+});
+
+
+it('creates a full group after publication and never repeats uncertain or stale attempts', async () => {
+  await db.insert(user).values({ id: 'u_mark', name: 'Mark', email: 'mark@owned.invalid', emailVerified: false, phoneNumber: '+15125550101', phoneNumberVerified: true });
+  const [plan] = await db.insert(plans).values({ organizerUserId: 'u_alex', request: 'Movie with Mark', templateId: 'movie-night', city: austin, timeZone: austin.timeZone, status: 'voting', inputRevision: 2 }).returning();
+  const { planParticipants } = await import('@hacktx/db');
+  await db.insert(planParticipants).values([{ planId: plan!.id, userId: 'u_alex' }, { planId: plan!.id, userId: 'u_mark' }]);
+  const client = new FakeClient();
+  client.next = async () => ({ type: 'send.result', id: 'group-test', ok: true, status: 'accepted', chatId: 'complete-group', messageId: 'intro' });
+  const create = createClawGroupCreator(client, LINE);
+  await create(db, plan!.id, 1);
+  expect(client.sent).toHaveLength(0);
+  await create(db, plan!.id, 2);
+  await create(db, plan!.id, 2);
+  expect(client.sent).toHaveLength(1);
+  expect(client.sent[0]!.target).toEqual({ to: ['+15125550100', '+15125550101'] });
+});
+
+it('retains known group members when a provider message omits the roster', async () => {
+  await ingestClawMessage(db, LINE, inbound({ messageId: 'roster1', isGroup: true, participants: ['+15125550100', '+15125550101'] }));
+  await ingestClawMessage(db, LINE, inbound({ messageId: 'roster2', isGroup: true }));
+  expect((await db.select().from(conversationMembers)).every(member => member.isCurrent)).toBe(true);
+});

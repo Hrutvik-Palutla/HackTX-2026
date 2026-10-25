@@ -12,10 +12,14 @@ services:
     env_file:
       - ${APP_ENV_FILE:-.env.production}
     environment:
+      LINK_CLI_PATH: /opt/sidequest-link/node_modules/.bin/link-cli
+      LINK_AUTH_DIRECTORY: /var/lib/sidequest/link-auth
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: "1"
       HOSTNAME: 0.0.0.0
       PORT: "3000"
+    volumes:
+      - wallet_data:/var/lib/sidequest/link-auth
     expose:
       - "3000"
     healthcheck:
@@ -60,7 +64,12 @@ services:
     env_file:
       - ${APP_ENV_FILE:-.env.production}
     environment:
+      LINK_CLI_PATH: /opt/sidequest-link/node_modules/.bin/link-cli
+      LINK_AUTH_DIRECTORY: /var/lib/sidequest/link-auth
       NODE_ENV: production
+    volumes:
+      - wallet_data:/var/lib/sidequest/link-auth
 volumes:
+  wallet_data:
   caddy_data:
   caddy_config:

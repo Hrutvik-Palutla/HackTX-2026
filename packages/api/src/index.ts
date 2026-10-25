@@ -12,7 +12,7 @@ import {
   savePrivateFact, updateParticipants,
 } from '@hacktx/core';
 import { templates, loadTemplate, saveTemplate } from '@hacktx/templates';
-import { createMuse, createDrop, listDrops, editDrop, findCommonGround, getGroundDraft, attachGround, planGround, readQuest, generateQuest, completeQuestChallenge, describePhoto, transcribeVoice, createQuestArt, loadPublicDemo } from '@hacktx/agent';
+import { setBuyer, createMuse, createDrop, listDrops, editDrop, findCommonGround, getGroundDraft, attachGround, planGround, readQuest, generateQuest, completeQuestChallenge, describePhoto, transcribeVoice, createQuestArt, loadPublicDemo } from '@hacktx/agent';
 
 type Cfg = { db: Db; getUserId(req: Request): Promise<string | null>; appOrigin?: string; teamUserIds?: string[] };
 // Kept on globalThis: Next loads instrumentation and each route bundle as separate module instances.
@@ -117,20 +117,14 @@ export const postDecision = route(async ({ req, db, actor, params }) => {
     evidenceMessageIds: z.array(z.string()).default([]), expectedRevision: z.number().int(),
   }));
   const r = await recordDecision(db, actor, { ...b, planId: params.id! });
+  await enqueue(db, { kind: 'sync_calendar', planId: params.id!, dedupeKey: `sync_calendar:${params.id}:${b.versionId}:selected`, payload: { planId: params.id! } });
   return { data: { decisionId: r.decision.id, notAttendingUserIds: r.notAttending } };
 });
 export const postBuyer = route(async ({ req, db, actor, params }) => {
   const input = await body(req, z.object({ expectedRevision: z.number().int() }));
-  return { data: await db.transaction(async tx => {
-    await tx.select({ id: plans.id }).from(plans).where(eq(plans.id, params.id!)).for('update');
-    const plan = await assertMember(tx, params.id!, actor.userId);
-    if (!plan.activeVersionId || !plan.selectedOptionId || plan.inputRevision !== input.expectedRevision || !['selected', 'needs_handoff', 'handoff', 'booked'].includes(plan.status)) throw new AppError('STALE_PLAN', 'Choose the current outing before volunteering for checkout.');
-    const [decision] = await tx.select().from(planDecisions).where(eq(planDecisions.versionId, plan.activeVersionId)).orderBy(desc(planDecisions.recordedAt)).limit(1);
-    if (!decision || !decision.attendeeUserIds.includes(actor.userId)) throw new AppError('FORBIDDEN', 'Only an attendee can volunteer for checkout.');
-    if (decision.buyerUserId && decision.buyerUserId !== actor.userId) throw new AppError('STALE_PLAN', 'Another attendee is already handling checkout.');
-    await tx.update(planDecisions).set({ buyerUserId: actor.userId }).where(eq(planDecisions.id, decision.id));
-    return { buyerUserId: actor.userId };
-  }) };
+  const result = await setBuyer(db, actor, params.id!, true, input.expectedRevision);
+  if (!result.confirmed) throw new AppError(result.error === 'NOT_ATTENDEE' ? 'FORBIDDEN' : 'STALE_PLAN', result.message || 'Buyer could not be confirmed.');
+  return { data: { buyerUserId: actor.userId } };
 });
 
 export const patchParticipants = route(async ({ req, db, actor, params }) => {

@@ -7,11 +7,14 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps apps
 COPY packages packages
 RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @hacktx/booking-worker deploy --legacy --prod /opt/sidequest-link
+RUN install -d -m 0700 -o node -g node /var/lib/sidequest/link-auth
 RUN NEXT_STANDALONE=1 pnpm --filter @muse/web build
 
 FROM build AS worker
 ARG SOURCE_REVISION=local
 ENV SOURCE_REVISION=$SOURCE_REVISION
+ENV LINK_CLI_PATH=/opt/sidequest-link/node_modules/.bin/link-cli LINK_AUTH_DIRECTORY=/var/lib/sidequest/link-auth
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 USER node
 CMD ["node", "--import=tsx", "apps/worker/src/index.ts"]
@@ -19,12 +22,15 @@ CMD ["node", "--import=tsx", "apps/worker/src/index.ts"]
 FROM node:24.22.1-bookworm-slim AS runtime
 ARG SOURCE_REVISION=local
 ENV SOURCE_REVISION=$SOURCE_REVISION
+ENV LINK_CLI_PATH=/opt/sidequest-link/node_modules/.bin/link-cli LINK_AUTH_DIRECTORY=/var/lib/sidequest/link-auth
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000
 COPY --from=build --chown=node:node /app/apps/web/.next/standalone ./
 COPY --from=build --chown=node:node /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=build --chown=node:node /app/apps/web/public ./apps/web/public
+COPY --from=build --chown=node:node /opt/sidequest-link /opt/sidequest-link
+RUN install -d -m 0700 -o node -g node /var/lib/sidequest/link-auth
 USER node
 EXPOSE 3000
 CMD ["node", "apps/web/server.js"]

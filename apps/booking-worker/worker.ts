@@ -202,7 +202,7 @@ export async function runOwnedFixtureBrowserTest(quote: BookingQuote): Promise<C
   let chromium: { launch(options?: object): Promise<{ newPage(): Promise<FixturePage>; close(): Promise<void> }> };
   try {
     // @ts-ignore Playwright is supplied by the isolated booking-worker image only.
-    ({ chromium } = await import('playwright') as unknown as { chromium: typeof chromium });
+    ({ chromium } = await import(/* webpackIgnore: true */ 'playwright') as unknown as { chromium: typeof chromium });
   } catch {
     throw new Error('Playwright is optional and is not installed in this worker image.');
   }

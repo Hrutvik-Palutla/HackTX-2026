@@ -11,7 +11,8 @@
     "@hacktx/contracts": "workspace:*",
     "@hacktx/core": "workspace:*",
     "@hacktx/db": "workspace:*",
-    "@hacktx/integrations": "workspace:*"
+    "@hacktx/integrations": "workspace:*",
+    "drizzle-orm": "0.45.4"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.11"

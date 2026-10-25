@@ -7,3 +7,5 @@ export * from './votes';
 export * from './facts';
 export * from './polls';
 export * from './conversations';
+export * from './calendar';
+export * from './connections';

@@ -8,6 +8,8 @@ export interface Part4Runtime {
   authenticate(request: Request): Promise<ActorContext | null>;
   /** Verify Origin/session CSRF for cookie auth; bearer-based internal adapters can implement their own check. */
   authorizeMutation(request: Request, actor: ActorContext): Promise<boolean>;
+  /** Project durable outcomes into shared chat/plan state. The worker retries if this callback fails. */
+  afterMutation?(): Promise<void>;
 }
 const runtimeKey = Symbol.for('hacktx.part4.runtime.v1');
 const runtimeStorage = globalThis as typeof globalThis & { [key: symbol]: Part4Runtime | undefined };
@@ -82,6 +84,10 @@ export async function handlePart4(action: Part4Action, request: Request, params:
         const shares = input.shares.map(value => { const item = parseObject(value); return { attendeeUserId: requiredString(item.attendeeUserId, 'attendeeUserId'), amount: money(item.amount) }; });
         await service.finalizeShares(actor, params.id, shares, optionalString(input.buyerPayPalMe, 'buyerPayPalMe') ?? null); result = { updated: true }; break;
       }
+    }
+    if (!readOnly && rt.afterMutation) {
+      try { await rt.afterMutation(); }
+      catch { console.error('[fulfillment] Outcome projection pending; the worker will retry.'); }
     }
     return Response.json({ data: result }, { status, headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {

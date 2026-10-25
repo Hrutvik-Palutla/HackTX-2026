@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import { candidates, conversations, plans, planParticipants, planConversations, sources, type Db } from '@hacktx/db';
-import type { Candidate, City, DiscoveryPort, Interval, PlanOption } from '@hacktx/contracts';
+import type { CalendarPort, Candidate, City, DiscoveryPort, Interval, PlanOption } from '@hacktx/contracts';
 import {
   AppError, WEB, checkSlot, enqueue, enqueueMessage, postToConversation, tally, loadFactsForFeasibility, loadMemberAvailability, publishVersion, setStatus,
   type OptionDraft, type SlotFit,
@@ -13,7 +13,18 @@ import { planGround } from './standout';
 import type { Muse } from './muse';
 import { LimitError, RunRecorder } from './recorder';
 
-export type PlannerDeps = { db: Db; muse: Muse; discovery: DiscoveryPort; now?: () => Date; refreshAvailability?: (planId: string, window: Interval) => Promise<unknown> };
+import { refreshPlanAvailability, ensurePlanGroup } from '@hacktx/core';
+
+/** `calendar` (Part 3's Google free/busy) refreshes snapshots before feasibility; without it only stored snapshots and chat statements count. */
+export type PlannerDeps = {
+  db: Db;
+  muse: Muse;
+  discovery: DiscoveryPort;
+  calendar?: CalendarPort;
+  /** Test seam retained for deterministic planner checks. */
+  refreshAvailability?: (planId: string, window: Interval) => Promise<unknown>;
+  now?: () => Date;
+};
 
 const MAX_CANDIDATES = 15;
 const DEFAULT_DURATION_MIN = 120;
@@ -82,6 +93,8 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
     const participants = (await db.select({ userId: planParticipants.userId }).from(planParticipants).where(eq(planParticipants.planId, plan.id)))
       .map((p) => p.userId).filter((u): u is string => !!u);
     const feasible = await rec.step('validation', 'feasibility', async () => {
+      // Failed/disconnected calendars are stored as such (unknown, not free); a calendar outage never fails the run.
+      if (deps.calendar) await refreshPlanAvailability(db, deps.calendar, plan.id, window).catch((e) => console.warn(`[planner] calendar refresh failed: ${e instanceof Error ? e.message : e}`));
       const members = await loadMemberAvailability(db, plan.id, participants, window);
       const facts = await loadFactsForFeasibility(db, plan.id);
       const limits = facts.flatMap((f) => (f.kind === 'spending_limit' ? [f.value.maximumShare.amountMinor] : []));
@@ -210,6 +223,7 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
     (r) => ({ summary: `version ${r.version.versionNumber}` }));
 
     const versionId = published.version.id;
+    await ensurePlanGroup(db, plan.id, plan.inputRevision); // private-request plans get a group chat before the first options
     await notifyPlan(db, plan.id, `options:${versionId}`, formatOptions(published.options, job.reason), versionId);
     // Part 3's publish_poll handler posts a native poll (labels in A,B,C order) per group chat, then calls registerPoll.
     for (const g of (await planGroupConversations(db, plan.id)).filter((c) => c.provider !== WEB)) {

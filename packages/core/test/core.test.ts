@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { jobs, outbox, plans } from '@hacktx/db';
+import { jobs, messages, outbox, plans, votes } from '@hacktx/db';
 import {
   AppError, checkSlot, statementToBusy, enqueue, claim, complete, enqueueMessage, reserveEffect, createPlan, publishVersion,
   requestRepair, recordVote, tally, recordDecision, publicPlan, savePrivateFact, listOwnFacts, loadMemberAvailability, open,
+  webConversation,
   type OptionDraft,
 } from '@hacktx/core';
 import { testDb, seedUsers, befriend, austin, web } from './helpers';
@@ -127,19 +128,22 @@ describe('plan lifecycle', () => {
     expect(await code(recordVote(db, web(u.Mel!), { planId: plan.id, versionId: version.id, acceptableOptionIds: [A!.id], favoriteOptionId: null, noneAcceptable: false, source: 'native_poll', sourceEventId: 'e6' }))).toBe('STALE_PLAN');
   });
 
-  it('decision requires all current members to approve without silently dropping anyone', async () => {
+  it('records an explicit attendee list from chat evidence while allowing silent holdouts', async () => {
     const { db, u, plan, version, options } = await votingPlan();
-    expect(await code(recordDecision(db, web(u.Alex!), { planId: plan.id, versionId: version.id, optionId: options[0]!.id, attendeeUserIds: [u.Alex!, u.Eve!], evidenceMessageIds: [], expectedRevision: 0 }))).toBe('INVALID');
-    const attendees = [u.Alex!, u.Mark!, u.Mel!];
-    const decision = { planId: plan.id, versionId: version.id, optionId: options[0]!.id, attendeeUserIds: attendees, evidenceMessageIds: [], expectedRevision: 0 };
-    expect(await code(recordDecision(db, web(u.Alex!), decision))).toBe('INVALID');
-    for (const id of attendees) await recordVote(db, web(id), { planId: plan.id, versionId: version.id, acceptableOptionIds: [options[0]!.id], favoriteOptionId: null, noneAcceptable: false, source: 'web', sourceEventId: `agree:${id}` });
-    expect(await code(recordDecision(db, web(u.Alex!), { ...decision, attendeeUserIds: attendees.slice(0, 2) }))).toBe('INVALID');
-    const r = await recordDecision(db, web(u.Alex!), decision);
-    expect(r.notAttending).toEqual([]);
+    const conversation = await webConversation(db, plan.id, 'group', u.Alex!);
+    const [evidence] = await db.insert(messages).values({
+      conversationId: conversation.id, providerMessageId: 'agreement-1', senderUserId: u.Alex!, senderHandle: 'Alex',
+      isPrivate: false, body: 'Let’s go with A. Mark and I are in; Mel can sit this one out.', occurredAt: new Date(),
+    }).returning();
+    const input = { planId: plan.id, versionId: version.id, optionId: options[0]!.id, attendeeUserIds: [u.Alex!, u.Mark!], evidenceMessageIds: [evidence!.id], expectedRevision: 0 };
+    expect(await code(recordDecision(db, web(u.Alex!), { ...input, attendeeUserIds: [u.Alex!, u.Eve!] }))).toBe('INVALID');
+    expect(await code(recordDecision(db, { userId: u.Alex!, source: 'group_message' }, { ...input, evidenceMessageIds: [] }))).toBe('INVALID');
+    expect(await db.select().from(votes)).toHaveLength(0);
+    const r = await recordDecision(db, { userId: u.Alex!, source: 'group_message' }, input);
+    expect(r.notAttending).toContain(u.Mel);
+    expect(r.notAttending).not.toContain(u.Mark);
+    expect(await db.select().from(messages).where(eq(messages.id, evidence!.id))).toHaveLength(1);
     expect((await db.select().from(plans).where(eq(plans.id, plan.id)))[0]!.status).toBe('selected');
-    // chat decisions must cite messages
-    expect(await code(recordDecision(db, { userId: u.Alex!, source: 'group_message' }, { planId: plan.id, versionId: version.id, optionId: options[0]!.id, attendeeUserIds: [u.Alex!], evidenceMessageIds: [], expectedRevision: 0 }))).not.toBe('ok');
   });
 });
 

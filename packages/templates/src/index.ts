@@ -7,6 +7,10 @@ import { desc, eq } from 'drizzle-orm';
 const CONVERSATION_TOOLS = [
   'start_plan', 'read_plan', 'record_availability', 'record_spending_limit', 'record_preference',
   'record_vote', 'propose_selection', 'request_replan', 'ask_private_question',
+  'invite_friend', 'respond_friend_request',
+  // booking & payment (Part 4 via the agent's fulfillment bridge)
+  'confirm_buyer', 'get_quote', 'request_payment_approval', 'book', 'checkout_handoff', 'report_booked',
+  'booking_status', 'record_repayment', 'request_booking_change',
 ];
 
 const model = process.env.MUSE_MODEL ?? 'muse-spark-1.3';

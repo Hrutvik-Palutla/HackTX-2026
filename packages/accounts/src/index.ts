@@ -230,6 +230,7 @@ export function accountService(repo: AccountRepository) {
 
 export {
   postgresAccounts,
+  decryptPhone,
   phoneDigest,
   tokenDigest,
   encryptPhone,

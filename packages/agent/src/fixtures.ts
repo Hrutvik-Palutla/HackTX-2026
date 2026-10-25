@@ -2,7 +2,13 @@
 // be mistaken for a SerpApi result. Replace with Part 4's adapter.
 import type { Candidate, DiscoveryPort, Interval } from '@hacktx/contracts';
 
-const at = (window: Interval, hoursFromStart: number) => new Date(Date.parse(window.startAt) + hoursFromStart * 3_600_000).toISOString();
+// Place fixture times inside any window (the hour offsets assume a multi-day window; short windows scale down).
+const at = (window: Interval, hoursFromStart: number) => {
+  const start = Date.parse(window.startAt);
+  const span = Date.parse(window.endAt) - start - 3 * 3_600_000;
+  const offset = Math.max(0, Math.min(hoursFromStart * 3_600_000, span * (hoursFromStart / 36)));
+  return new Date(Math.floor((start + offset) / 900_000) * 900_000).toISOString();
+};
 
 function fixture(id: string, title: string, venue: string, startAt: string | null, cents: number | null, kind: Candidate['kind']): Candidate {
   return {

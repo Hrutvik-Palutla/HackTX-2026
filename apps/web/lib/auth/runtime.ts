@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { seal } from "@hacktx/core";
 import {
   postgresAccounts,
   type AccountRepository,
@@ -22,7 +23,7 @@ const registry = globalThis as typeof globalThis & {
   sidequestPool?: Pool;
   sidequestFriendshipAccepted?: (
     tx: SqlConnection,
-    users: { inviterId: string; recipientId: string },
+    users: { inviterId: string; recipientId: string; invitationId: string },
   ) => Promise<void>;
 };
 export function configureAccounts(value: AccountRuntime) {
@@ -87,6 +88,46 @@ export function getAccounts(): AccountRuntime | undefined {
       },
       async (tx, users) => {
         await registry.sidequestFriendshipAccepted?.(tx, users);
+      },
+      async (tx, invite) => {
+        if (!process.env.CLAW_MESSENGER_API_KEY)
+          throw Error("Friend invitation delivery is unavailable.");
+        const base = process.env.APP_BASE_URL || process.env.BETTER_AUTH_URL;
+        if (!base) throw Error("Friend invitation URL is unavailable.");
+        const origin = new URL(base);
+        if (
+          origin.protocol !== "https:" &&
+          !(origin.protocol === "http:" && ["localhost", "127.0.0.1"].includes(origin.hostname))
+        )
+          throw Error("Friend invitation URL is not configured securely.");
+
+        const inviter = await tx.query<{ name: string | null }>(
+          'SELECT name FROM "user" WHERE id=$1',
+          [invite.inviterId],
+        );
+        const inviterName = inviter.rows[0]?.name?.trim() || "A friend";
+        const inviteUrl = new URL(
+          `/invite/${encodeURIComponent(invite.token)}`,
+          origin,
+        ).href;
+        const text = `${inviterName} invited you to connect on SideQuest. Reply YES to accept or NO to decline, or accept privately here: ${inviteUrl}`;
+        const effectKey = `invite:${invite.invitationId}`;
+        const result = await tx.query<{ id: string }>(
+          "INSERT INTO outbox (recipient, effect_key, body, body_enc, expires_at) VALUES ($1,$2,NULL,$3,NOW()+INTERVAL '7 days') ON CONFLICT (effect_key) DO NOTHING RETURNING id",
+          [
+            JSON.stringify({ kind: "invite", invitationId: invite.invitationId }),
+            effectKey,
+            seal("outbox", text),
+          ],
+        );
+        if (result.rows[0])
+          await tx.query(
+            "INSERT INTO jobs (kind, dedupe_key, payload) VALUES ('send_outbox', $1, $2) ON CONFLICT (dedupe_key) DO NOTHING",
+            [
+              `send_outbox:${effectKey}`,
+              JSON.stringify({ outboxId: result.rows[0].id }),
+            ],
+          );
       },
     ),
   });

@@ -1,5 +1,6 @@
 import {
   createCipheriv,
+  createDecipheriv,
   createHmac,
   randomBytes,
   randomUUID,
@@ -26,6 +27,7 @@ export function tokenDigest(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 export function encryptPhone(phone: string, key: Buffer) {
+  if (key.length !== 32) throw Error("Phone encryption key must be 32 bytes.");
   const nonce = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, nonce);
   cipher.setAAD(Buffer.from("sidequest:friend-phone:v1"));
@@ -36,13 +38,34 @@ export function encryptPhone(phone: string, key: Buffer) {
     cipher.getAuthTag(),
   ]).toString("base64");
 }
+export function decryptPhone(envelope: string, key: Buffer) {
+  if (key.length !== 32) throw Error("Phone encryption key must be 32 bytes.");
+  const value = Buffer.from(envelope, "base64");
+  if (value.length < 28) throw Error("Invalid encrypted phone envelope.");
+  const decipher = createDecipheriv("aes-256-gcm", key, value.subarray(0, 12));
+  decipher.setAAD(Buffer.from("sidequest:friend-phone:v1"));
+  decipher.setAuthTag(value.subarray(-16));
+  return Buffer.concat([
+    decipher.update(value.subarray(12, -16)),
+    decipher.final(),
+  ]).toString("utf8");
+}
 // Part 2 owns DDL. Required column names and constraints are in docs/APP_ACCOUNTS_HANDOFF.md.
 export function postgresAccounts(
   db: AccountDatabase,
   keys: AccountKeys,
   onAccepted?: (
     tx: SqlConnection,
-    users: { inviterId: string; recipientId: string },
+    users: { inviterId: string; recipientId: string; invitationId: string },
+  ) => Promise<void>,
+  onInviteCreated?: (
+    tx: SqlConnection,
+    invite: {
+      invitationId: string;
+      token: string;
+      phoneE164: string;
+      inviterId: string;
+    },
   ) => Promise<void>,
 ): AccountRepository {
   if (keys.encryptionKey.length !== 32 || keys.lookupKey.length < 32)
@@ -139,6 +162,12 @@ export function postgresAccounts(
             tokenDigest(token),
           ],
         );
+        await onInviteCreated?.(tx, {
+          invitationId: id,
+          token,
+          phoneE164: phone,
+          inviterId,
+        });
       });
       return { id, token };
     },
@@ -151,7 +180,7 @@ export function postgresAccounts(
         );
         if (!account.rows.length) return false;
         const result = await tx.query(
-          "UPDATE friend_invites SET state=$3 WHERE (id::text=$1 OR token_hash=$5) AND recipient_phone_digest=$2 AND state='pending' AND expires_at>$4 RETURNING inviter_id",
+          "UPDATE friend_invites SET state=$3 WHERE (id::text=$1 OR token_hash=$5) AND recipient_phone_digest=$2 AND state='pending' AND expires_at>$4 RETURNING id, inviter_id",
           [
             reference,
             phoneDigest(phone, keys.lookupKey),
@@ -162,17 +191,29 @@ export function postgresAccounts(
         );
         if (!result.rows.length) return false;
         if (state === "accepted") {
-          const inviter = String(result.rows[0].inviter_id);
+          const invitationId = String(result.rows[0]!.id);
+          const inviter = String(result.rows[0]!.inviter_id);
           if (inviter === recipientUserId) throw Error("Invalid friendship");
           const [low, high] = [inviter, recipientUserId].sort();
           await tx.query(
             "INSERT INTO friendships (user_low_id,user_high_id,requested_by,status,accepted_at) VALUES ($1,$2,$3,'accepted',NOW()) ON CONFLICT (user_low_id,user_high_id) DO UPDATE SET status='accepted', accepted_at=NOW()",
             [low, high, inviter],
           );
+          // Bind every held seat to the verified recipient, removing a duplicate placeholder if the
+          // recipient already occupies a seat in that plan. This mirrors core's invite acceptance.
+          await tx.query(
+            "DELETE FROM plan_participants seat USING plan_participants member WHERE seat.invite_id=$1 AND seat.user_id IS NULL AND member.plan_id=seat.plan_id AND member.user_id=$2",
+            [invitationId, recipientUserId],
+          );
+          await tx.query(
+            "UPDATE plan_participants SET user_id=$2 WHERE invite_id=$1 AND user_id IS NULL",
+            [invitationId, recipientUserId],
+          );
           if (onAccepted)
             await onAccepted(tx, {
               inviterId: inviter,
               recipientId: recipientUserId,
+              invitationId,
             });
         }
         return true;

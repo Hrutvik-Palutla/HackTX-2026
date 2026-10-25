@@ -1,12 +1,14 @@
 // Durable worker: claims Postgres jobs with leases, runs registered handlers, retries with backoff.
 import { createDb } from '@hacktx/db';
 import { claim, complete, fail, heartbeat, resumeWaitingPlans, AppError } from '@hacktx/core';
-import { createMuse, fixtureDiscovery, handleInbound, runPlanJob, runPollReminder, type InboundJob } from '@hacktx/agent';
-import type { DiscoveryPort, JobKind } from '@hacktx/contracts';
+import { configureFulfillment, createMuse, fixtureDiscovery, fulfillmentJobHandlers, handleInbound, runPlanJob, runPollReminder, type InboundJob } from '@hacktx/agent';
+import type { CalendarPort, DiscoveryPort, JobKind } from '@hacktx/contracts';
 import { createSerpApiDiscovery } from '../../../packages/discovery/src/index.ts';
 import { startClawMessenger } from '@hacktx/integrations/messaging/claw';
 import { GoogleCalendar, googleConfig } from '@hacktx/integrations/google-calendar';
-import { refreshPlanAvailability, createSyncCalendarHandler } from '@hacktx/integrations/calendar-jobs';
+import { createSyncCalendarHandler } from '@hacktx/integrations/calendar-jobs';
+import { createSharedFulfillment, synchronizeFulfillment } from '@hacktx/integrations/fulfillment';
+import { createFulfillmentJobHandlers } from '../../../packages/fulfillment/src/jobs.ts';
 import { handlers, register, type JobHandler } from './registry';
 
 const { db, pool } = createDb();
@@ -14,10 +16,6 @@ const { db, pool } = createDb();
 let museClient: ReturnType<typeof createMuse> | null = null;
 const muse = () => (museClient ??= createMuse());
 const workerId = `worker-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
-const calendar = process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REDIRECT_URI
-  ? new GoogleCalendar(db, googleConfig()) : null;
-if (calendar) register('sync_calendar', createSyncCalendarHandler(calendar));
-
 // Real discovery = Part 4's SerpApi adapter (bounded requests, cache, honest unknowns, source metadata).
 // DISCOVERY=fixture is an explicit, FIXTURE-labeled local fallback only.
 let discovery: DiscoveryPort | null = null;
@@ -29,11 +27,34 @@ if (process.env.DISCOVERY === 'fixture') {
   discovery = createSerpApiDiscovery({ apiKey: process.env.SERPAPI_API_KEY, ...(max > 0 ? { maxRequests: max } : {}) });
 }
 
+// Part 3: Claw Messenger iMessage (inbound -> process_inbound; outbox + polls out). Null when unconfigured.
+const claw = await startClawMessenger({ db });
+if (claw) {
+  register('send_outbox', claw.handlers.send_outbox);
+  register('publish_poll', claw.handlers.publish_poll);
+} else {
+  console.warn('[worker] messaging disabled: set CLAW_MESSENGER_API_KEY');
+}
+
+// Part 3: Google Calendar free/busy for planning and own-calendar event writes.
+let calendar: CalendarPort | undefined;
+try {
+  calendar = new GoogleCalendar(db, googleConfig());
+  register('sync_calendar', createSyncCalendarHandler(calendar));
+} catch (e) {
+  console.warn(`[worker] calendar disabled: ${e instanceof Error ? e.message : e}`);
+}
+
+// The web and worker share selection, private limits, wallet configuration and durable outcomes.
+const part4 = createSharedFulfillment({ db, pool });
+configureFulfillment(part4.service);
+for (const [kind, handler] of Object.entries(fulfillmentJobHandlers(createFulfillmentJobHandlers(part4.service)))) {
+  register(kind as JobKind, handler);
+}
+
 const planHandler: JobHandler = async ({ job }) => {
   if (!discovery) throw new AppError('UNRESOLVED', 'No discovery configured: set SERPAPI_API_KEY (or DISCOVERY=fixture for labeled local data)', true);
-  await runPlanJob({ db, muse: muse(), discovery, ...(calendar ? {
-    refreshAvailability: (planId, window) => refreshPlanAvailability(db, calendar, planId, window),
-  } : {}) }, job.payload as { planId: string; inputRevision: number; reason?: string });
+  await runPlanJob({ db, muse: muse(), discovery, calendar }, job.payload as { planId: string; inputRevision: number; reason?: string });
 };
 register('plan', planHandler);
 register('repair', planHandler);
@@ -44,17 +65,15 @@ register('resume_connections', async ({ job }) => {
 register('poll_reminder', async ({ job }) => { await runPollReminder(db, job.payload as { planId: string; versionId: string }); });
 register('process_inbound', async ({ job }) => { await handleInbound({ db, muse: muse() }, job.payload as InboundJob); });
 
-// Part 3: Claw Messenger iMessage transport delivers outbox messages and polls, and ingests replies.
-const claw = await startClawMessenger({ db });
-if (claw) for (const [kind, handler] of Object.entries(claw.handlers)) register(kind as JobKind, handler as JobHandler);
-else console.warn('[worker] CLAW_MESSENGER_API_KEY/CLAW_MESSENGER_FROM_PHONE not set: outbox messages and polls stay queued');
-
 let stopping = false;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { stopping = true; });
 
 const kinds = [...handlers.keys()] as JobKind[];
 console.log(`[worker] ${workerId} handling: ${kinds.join(', ')}`);
 while (!stopping) {
+  try { await synchronizeFulfillment(db, part4.service); }
+  catch { console.error('[worker] Fulfillment projection pending; will retry.'); }
+
   const job = await claim(db, workerId, 90_000, kinds);
   if (!job) { await new Promise((r) => setTimeout(r, 1000)); continue; }
   const beat = setInterval(() => { heartbeat(db, job).catch(() => {}); }, 30_000);
