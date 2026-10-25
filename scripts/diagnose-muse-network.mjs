@@ -14,11 +14,12 @@ console.log(JSON.stringify({ probe: 'network-runtime', runtime: process.version,
   credentialMatchesDeployment: process.argv[2] ? createHash('sha256').update(key).digest('hex') === process.argv[2] : undefined,
   proxyConfigured: ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY'].some(name => !!process.env[name]), nodeEnvProxy: process.env.NODE_USE_ENV_PROXY ?? 'unset' }));
 
-async function probe(name, path, address) {
+async function probe(name, path, address, requestedModel = model) {
   await new Promise(resolve => {
     const options = { hostname, path, method: path === '/v1/models' ? 'GET' : 'POST', headers, agent: false, timeout: 20000 };
     if (address) {
       options.family = address.family;
+      options.autoSelectFamily = false;
       options.lookup = (_host, opts, callback) => opts.all ? callback(null, [address]) : callback(null, address.address, address.family);
     }
     const request = https.request(options, response => {
@@ -29,7 +30,7 @@ async function probe(name, path, address) {
       response.on('end', () => {
         let result;
         try { result = JSON.parse(text); } catch { result = {}; }
-        console.log(JSON.stringify({ probe: name, transport: 'https', remoteAddress, status: response.statusCode,
+        console.log(JSON.stringify({ probe: name, transport: 'https', remoteAddress, requestedModel, status: response.statusCode,
           requestId: response.headers['x-request-id'], server: response.headers.server, via: response.headers.via,
           edge: response.headers['cf-ray'], cache: response.headers['x-cache'], model: result.model,
           models: result.data?.map(item => item.id), error: result.error }));
@@ -38,9 +39,9 @@ async function probe(name, path, address) {
     });
     request.on('timeout', () => request.destroy(new Error('Request timed out.')));
     request.on('error', error => { console.log(JSON.stringify({ probe: name, transport: 'https', address, transportError: error.code ?? error.message })); resolve(); });
-    if (options.method === 'POST') request.write(body);
+    if (options.method === 'POST') request.write(JSON.stringify({ model: requestedModel, messages: [{ role: 'user', content: 'Reply OK.' }] }));
     request.end();
-  });
+  }).catch(error => console.log(JSON.stringify({ probe: name, transportError: error.message })));
 }
 
 await probe('default-catalog', '/v1/models');
@@ -56,4 +57,7 @@ for (let index = 1; index <= 2; index++) {
     console.log(JSON.stringify({ probe: `fetch-completion-${index}`, transport: 'fetch', status: response.status,
       requestId: response.headers.get('x-request-id'), server: response.headers.get('server'), model: result.model, error: result.error }));
   } catch (error) { console.log(JSON.stringify({ probe: `fetch-completion-${index}`, transportError: error.message })); }
+}
+for (const alternative of ['muse-spark-1.2', 'muse-spark-1.1', 'muse-wonder-1.0']) {
+  for (let index = 1; index <= 2; index++) await probe(`alternative-${alternative}-${index}`, '/v1/chat/completions', undefined, alternative);
 }
