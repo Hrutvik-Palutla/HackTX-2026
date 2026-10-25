@@ -53,29 +53,28 @@ export async function ingestClawMessage(db: Db, sendingLine: string, m: ClawInbo
       payload: { messageId: m.messageId, chatId: m.chatId, isGroup: !!m.isGroup, service: m.service ?? null, sentAt: m.sentAt ?? null },
     }).onConflictDoNothing().returning({ id: inboundEvents.id });
     if (!rows[0]) return false;
-    if (m.isGroup) await onGroupMessage(tx as unknown as Db, sendingLine, m);
-    else await maybeGreetStranger(tx as unknown as Db, sendingLine, m);
-    await enqueue(tx as unknown as Db, { kind: 'process_inbound', dedupeKey: `${CLAW_PROVIDER}:${m.messageId}`, payload: { sendingLine, message } });
+    const joinedGroup = m.isGroup ? await onGroupMessage(tx as unknown as Db, sendingLine, m) : false;
+    if (!m.isGroup) await maybeGreetStranger(tx as unknown as Db, sendingLine, m);
+    await enqueue(tx as unknown as Db, { kind: 'process_inbound', dedupeKey: `${CLAW_PROVIDER}:${m.messageId}`, payload: { sendingLine, message, joinedGroup } });
     return true;
   });
 }
 
-export const GROUP_INTRO = 'How can I help?';
-
 /**
  * Claw has no "added to group" event: the first message from an unseen group chat means we were just added.
- * Greet once (the agent can't see anything sent before it joined) and keep the member list current.
- * Membership is context only; it never proves a friendship or attendance.
+ * Returns true for that first message; the conversation handler then answers the request, or says
+ * "How can I help?" if the message wasn't for the agent. Also keeps the member list current
+ * (context only; membership never proves a friendship or attendance).
  */
-async function onGroupMessage(db: Db, sendingLine: string, m: ClawInboundMessage) {
+async function onGroupMessage(db: Db, sendingLine: string, m: ClawInboundMessage): Promise<boolean> {
   const created = await db.insert(conversations).values({ provider: CLAW_PROVIDER, sendingLine, externalChatId: m.chatId, kind: 'group' })
     .onConflictDoNothing().returning();
   const [conv] = created.length ? created : await db.select().from(conversations).where(and(
     eq(conversations.provider, CLAW_PROVIDER), eq(conversations.sendingLine, sendingLine), eq(conversations.externalChatId, m.chatId),
   ));
-  if (!conv) return;
-  if (created.length) await postToConversation(db, conv, GROUP_INTRO, { effectKey: `intro:${conv.id}` });
+  if (!conv) return false;
   await syncMembers(db, conv.id, [...new Set([...(m.participants ?? []), m.from])].filter((h) => h !== sendingLine));
+  return created.length > 0;
 }
 
 async function syncMembers(db: Db, conversationId: string, handles: string[]) {

@@ -206,15 +206,20 @@ export const TOOLS = [
   }),
   tool({
     name: 'request_replan',
-    description: 'Ask for revised options because a constraint, time, or activity materially changed. Old votes become stale.',
-    args: z.object({ reason: z.string().max(200) }),
+    description: 'Ask for revised options because a constraint, time, or activity materially changed. Old votes become stale. When the group changes WHAT they want to do (a different movie, a different kind of outing), set newRequest to the full updated request (e.g. "watch Clayface Friday night") and kind accordingly; otherwise null.',
+    args: z.object({ reason: z.string().max(200), newRequest: z.string().min(3).max(300).nullable(), kind: z.enum(['movie-night', 'local-outing']).nullable() }),
     async run(ctx, a) {
       const planId = needPlan(ctx);
       const plan = await assertMember(ctx.db, planId, ctx.actor.userId);
       // A reason written in a private chat may contain private details; the planner sees only a generic one.
       const reason = ctx.conversation.kind === 'group' ? a.reason : "a participant's constraints changed";
-      await requestRepair(ctx.db, planId, plan.inputRevision, reason);
-      return { replanning: true };
+      // Changing the activity is a group decision: from a group chat, or the organizer privately.
+      const canChange = ctx.conversation.kind === 'group' || plan.organizerUserId === ctx.actor.userId;
+      if (a.newRequest && !canChange) return { replanning: false, error: 'Only the organizer can change the plan privately; suggest it in the group.' };
+      await requestRepair(ctx.db, planId, plan.inputRevision, reason, {
+        ...(a.newRequest ? { request: a.newRequest } : {}), ...(a.newRequest && a.kind ? { templateId: a.kind } : {}),
+      });
+      return { replanning: true, ...(a.newRequest ? { nowPlanning: a.newRequest } : {}) };
     },
   }),
   tool({

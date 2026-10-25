@@ -16,7 +16,9 @@ const HISTORY = 20;
 // State-changing tools that should succeed at most once per incoming message.
 const ONCE_PER_MESSAGE = new Set(['start_plan', 'record_vote', 'propose_selection', 'request_replan']);
 
-export type InboundJob = { sendingLine: string; message: InboundMessage } | { web: { messageId: string } };
+/** joinedGroup: first message seen from this group, i.e. the agent was just added (adapters have no join event). */
+export type InboundJob = { sendingLine: string; message: InboundMessage; joinedGroup?: boolean } | { web: { messageId: string } };
+export const GROUP_INTRO = 'How can I help?';
 type Deps = { db: Db; muse: Muse };
 
 export async function handleInbound(deps: Deps, job: InboundJob) {
@@ -52,8 +54,11 @@ export async function handleInbound(deps: Deps, job: InboundJob) {
     replyToProviderMessageId: m.replyToMessageId, occurredAt: new Date(m.occurredAt),
   }).onConflictDoNothing();
   const [stored] = await db.select().from(messages).where(and(eq(messages.conversationId, conv.id), eq(messages.providerMessageId, m.messageId)));
-  if (!userId) return { status: 'unknown_sender' as const, conversationId: conv.id }; // Part 3 sends the signup/link prompt
-  return converse(deps, conv, stored!, userId);
+  if (!userId) {
+    if (job.joinedGroup) await postToConversation(db, conv, GROUP_INTRO, { effectKey: `intro:${conv.id}` });
+    return { status: 'unknown_sender' as const, conversationId: conv.id }; // Part 3 sends the signup/link prompt
+  }
+  return converse(deps, conv, stored!, userId, { joinedGroup: !!job.joinedGroup });
 }
 
 async function converse(
@@ -61,6 +66,7 @@ async function converse(
   conv: typeof conversations.$inferSelect,
   stored: typeof messages.$inferSelect,
   userId: string,
+  o: { joinedGroup?: boolean } = {},
 ) {
   const kind = conv.kind as 'group' | 'private';
   const actor: ActorContext = {
@@ -113,6 +119,7 @@ Stay quiet during unrelated chatter: answer exactly ${NO_REPLY}.
 Use tools to record facts and votes; never claim something was saved, booked, or paid unless a tool result says so.
 In a group chat, "we", "us", or "the three of us" means the people in context.chatMembers: start plans there with includeChatMembers=true.
 Use the sender's city from context unless they name another place; do not ask for it.
+When the group changes what they want to do (a different movie or activity), call request_replan with newRequest set to the full updated request; the old option list no longer applies.
 If the sender is not on the plan's participant list, they can still chat, but only the organizer can add them.
 If start_plan reports people who aren't connected, ask the sender for their phone numbers. Once you have them, call start_plan for the connected people, then invite_friend for each new person, so they are added to the plan and planning waits for them to accept. Then tell the sender you've invited them and will start planning once they accept (don't say you're finding options yet).
 After start_plan succeeds, reply briefly that you're finding options (the app posts them). Don't ask about times unless the request has no time frame at all.
@@ -134,6 +141,9 @@ Message ids in brackets can be cited as evidence.` },
     const replied = !!text && text !== NO_REPLY;
     if (replied) {
       await postToConversation(db, conv, text.slice(0, 1500), { effectKey: `reply:${stored.id}`, planId: plan?.id ?? null, privateUserId: userId });
+    } else if (o.joinedGroup) {
+      // Just added and the first message wasn't for us: introduce ourselves once. A request gets its answer instead.
+      await postToConversation(db, conv, GROUP_INTRO, { effectKey: `intro:${conv.id}` });
     }
     return { status: 'ok' as const, replied };
   } catch (e) {

@@ -10,7 +10,7 @@ import {
 } from '@hacktx/db';
 import { enqueueMessage, type Job } from '@hacktx/core';
 import {
-  CLAW_PROVIDER, GROUP_INTRO, createClawGroup, createPublishPollHandler, createSendOutboxHandler, formatTextPoll, ingestClawMessage, toInboundMessage,
+  CLAW_PROVIDER, createClawGroup, createPublishPollHandler, createSendOutboxHandler, formatTextPoll, ingestClawMessage, toInboundMessage,
 } from './claw-adapter.ts';
 import type { ClawInboundMessage, ClawSendResult, SendTarget } from './claw-messenger.ts';
 
@@ -181,16 +181,13 @@ describe('publish_poll', () => {
 
 
 describe('added to a group', () => {
-  it('says "How can I help?" once, on the first message from a new group', async () => {
+  it('flags only the first message from a new group as joinedGroup and posts nothing itself', async () => {
     const g = (id: string) => inbound({ messageId: id, chatId: 'chat-new', isGroup: true, participants: ['+15125550100', '+15125550101', LINE] });
     await ingestClawMessage(db, LINE, g('g1'));
     await ingestClawMessage(db, LINE, g('g2'));
-    const rows = await db.select().from(outbox);
-    expect(rows.map((r) => r.body)).toEqual([GROUP_INTRO]);
-    expect(GROUP_INTRO).toBe('How can I help?');
-    const [conv] = await db.select().from(conversations).where(eq(conversations.externalChatId, 'chat-new'));
-    expect(rows[0]!.recipient).toEqual({ kind: 'group', conversationId: conv!.id });
-    expect(await db.select().from(jobs).where(eq(jobs.kind, 'process_inbound'))).toHaveLength(2); // the request is still handled
+    const queued = await db.select().from(jobs).where(eq(jobs.kind, 'process_inbound'));
+    expect(queued.map((j) => (j.payload as { joinedGroup: boolean }).joinedGroup)).toEqual([true, false]);
+    expect(await db.select().from(outbox)).toHaveLength(0);
   });
 
   it('does not greet private chats', async () => {
