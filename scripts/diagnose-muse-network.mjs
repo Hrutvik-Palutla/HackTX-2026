@@ -46,7 +46,9 @@ async function probe(name, path, address, requestedModel = model) {
 
 await probe('default-catalog', '/v1/models');
 for (let index = 1; index <= 3; index++) await probe(`default-completion-${index}`, '/v1/chat/completions');
-for (const address of addresses.slice(0, 4)) {
+// These runners have no IPv6 egress. The default requests already demonstrate
+// IPv4 connectivity; pin only reachable IPv4 routes to compare API responses.
+for (const address of addresses.filter(item => item.family === 4).slice(0, 4)) {
   await probe(`pinned-catalog-${address.address}`, '/v1/models', address);
   await probe(`pinned-completion-${address.address}`, '/v1/chat/completions', address);
 }
