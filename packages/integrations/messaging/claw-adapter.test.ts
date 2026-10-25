@@ -69,7 +69,7 @@ describe('inbound', () => {
     expect(queued[0]!.dedupeKey).toBe(`${CLAW_PROVIDER}:m1`);
     expect(JSON.stringify(queued[0]!.payload)).not.toContain('lets do friday');
     const decoded = JSON.parse(open('inbound', (queued[0]!.payload as { encryptedInbound: string }).encryptedInbound));
-    expect(decoded).toMatchObject({ sendingLine: LINE, message: { provider: CLAW_PROVIDER, text: 'lets do friday' } });
+    expect(decoded).toMatchObject({ sendingLine: LINE, message: { provider: CLAW_PROVIDER, text: 'lets do friday' }, joinedGroup: false });
   });
 
   it('ignores messages from our own line', async () => {
@@ -183,16 +183,17 @@ describe('publish_poll', () => {
 
 
 describe('added to a group', () => {
-  it('says "How can I help?" once, on the first message from a new group', async () => {
+  it('marks only the first group message as the join event and leaves the intro to the agent', async () => {
     const g = (id: string) => inbound({ messageId: id, chatId: 'chat-new', isGroup: true, participants: ['+15125550100', '+15125550101', LINE] });
     await ingestClawMessage(db, LINE, g('g1'));
     await ingestClawMessage(db, LINE, g('g2'));
     const rows = await db.select().from(outbox);
-    expect(rows.map((r) => r.body)).toEqual([GROUP_INTRO]);
+    expect(rows).toHaveLength(0);
     expect(GROUP_INTRO).toBe('How can I help?');
-    const [conv] = await db.select().from(conversations).where(eq(conversations.externalChatId, 'chat-new'));
-    expect(rows[0]!.recipient).toEqual({ kind: 'group', conversationId: conv!.id });
-    expect(await db.select().from(jobs).where(eq(jobs.kind, 'process_inbound'))).toHaveLength(2); // the request is still handled
+    const queued = await db.select().from(jobs).where(eq(jobs.kind, 'process_inbound'));
+    expect(queued).toHaveLength(2);
+    expect(JSON.parse(open('inbound', (queued[0]!.payload as { encryptedInbound: string }).encryptedInbound))).toMatchObject({ joinedGroup: true });
+    expect(JSON.parse(open('inbound', (queued[1]!.payload as { encryptedInbound: string }).encryptedInbound))).toMatchObject({ joinedGroup: false });
   });
 
   it('does not greet private chats', async () => {

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { z } from 'zod';
-import { agentRuns, conversations, messagingIdentities, outbox, planConversations, plans, runSteps, voteStates } from '@hacktx/db';
+import { agentRuns, conversations, jobs, messagingIdentities, outbox, planConversations, plans, runSteps, voteStates } from '@hacktx/db';
 import { createPlan, postToConversation, publicPlan, publishVersion, savePrivateFact } from '@hacktx/core';
+import { GROUP_INTRO } from '@hacktx/agent';
 import { fixtureDiscovery, handleInbound, runPlanJob, type ChatMessage, type Muse } from '@hacktx/agent';
+import { toolsFor, type ToolCtx } from '../src/tools';
 import { testDb, seedUsers, befriend, austin, web } from '../../core/test/helpers';
 
 const W = { startAt: '2026-10-31T00:00:00.000Z', endAt: '2026-11-03T00:00:00.000Z' };
@@ -128,6 +130,60 @@ describe('conversation', () => {
     } });
     expect(r.status).toBe('unknown_sender');
     expect(muse.seen).toHaveLength(0);
+  });
+
+  it('introduces itself only when its first group message gets no reply, and dedupes retries', async () => {
+    const { db, u, conv } = await setup();
+    await db.insert(messagingIdentities).values({ userId: u.Mark!, provider: 'linq', handle: '+15125550101', kind: 'phone', verifiedAt: new Date() });
+    const incoming = (messageId: string, text: string) => ({ provider: 'linq' as const, eventId: messageId, messageId, conversationExternalId: 'chat1', conversationKind: 'group' as const, senderHandle: '+15125550101', senderKind: 'phone' as const, text, occurredAt: '2026-10-30T18:00:00.000Z', replyToMessageId: null });
+    const unrelated = fakeMuse({ chat: [{ content: 'NO_REPLY' }] });
+    await handleInbound({ db, muse: unrelated }, { sendingLine: '+15125550000', message: incoming('intro1', 'random chatter'), joinedGroup: true });
+    await handleInbound({ db, muse: fakeMuse({ chat: [{ content: 'NO_REPLY' }] }) }, { sendingLine: '+15125550000', message: incoming('intro1', 'random chatter'), joinedGroup: true });
+    expect((await db.select().from(outbox)).filter((o) => o.effectKey === `intro:${conv.id}`).map((o) => o.body)).toEqual([GROUP_INTRO]);
+
+    const addressed = fakeMuse({ chat: [{ content: 'Here are the options.' }] });
+    await handleInbound({ db, muse: addressed }, { sendingLine: '+15125550000', message: incoming('intro2', 'What are the options?'), joinedGroup: true });
+    expect((await db.select().from(outbox)).filter((o) => o.body === 'Here are the options.')).toHaveLength(1);
+    expect((await db.select().from(outbox)).filter((o) => o.effectKey === `intro:${conv.id}`)).toHaveLength(1);
+
+    const fresh = await setup();
+    await fresh.db.insert(messagingIdentities).values({ userId: fresh.u.Mark!, provider: 'linq', handle: '+15125550101', kind: 'phone', verifiedAt: new Date() });
+    const firstAnswer = fakeMuse({ chat: [{ content: 'Here is the plan.' }] });
+    const addressedJob = { sendingLine: '+15125550000', message: incoming('addressed-first', 'What are the options?'), joinedGroup: true };
+    await handleInbound({ db: fresh.db, muse: firstAnswer }, addressedJob);
+    await handleInbound({ db: fresh.db, muse: fakeMuse({ chat: [{ content: 'NO_REPLY' }] }) }, addressedJob);
+    expect(firstAnswer.seen).toHaveLength(1);
+    expect((await fresh.db.select().from(outbox)).map((o) => o.body)).toEqual(['Here is the plan.']);
+  });
+
+  it('introduces itself for an unknown sender in a newly joined group only once', async () => {
+    const { db, conv } = await setup();
+    const message = { provider: 'linq' as const, eventId: 'unknown-1', messageId: 'unknown-1', conversationExternalId: 'chat1', conversationKind: 'group' as const, senderHandle: '+15125559999', senderKind: 'phone' as const, text: 'hello', occurredAt: '2026-10-30T18:00:00.000Z', replyToMessageId: null };
+    const job = { sendingLine: '+15125550000', message, joinedGroup: true };
+    expect((await handleInbound({ db, muse: fakeMuse({ chat: [] }) }, job)).status).toBe('unknown_sender');
+    await handleInbound({ db, muse: fakeMuse({ chat: [] }) }, job);
+    expect((await db.select().from(outbox)).filter((o) => o.effectKey === `intro:${conv.id}`).map((o) => o.body)).toEqual([GROUP_INTRO]);
+  });
+
+  it('allows activity edits in a group and by the private organizer only', async () => {
+    const { db, u, plan, conv } = await setup();
+    const replan = toolsFor(['request_replan']).byName.get('request_replan')!;
+    const actorCtx = (userId: string, kind: 'group' | 'private', id = conv.id): ToolCtx => ({
+      db, actor: { userId, source: kind === 'group' ? 'group_message' : 'private_message', conversationId: id, sourceMessageId: 'm-tool' },
+      planId: plan.id, conversation: { id, kind }, messageId: 'm-tool', providerMessageId: 'm-tool',
+    });
+    const args = { reason: 'Changed our minds', newRequest: 'Go bowling this Saturday in Austin', kind: 'local-outing' as const };
+    await replan.run(actorCtx(u.Mark!, 'group'), args);
+    expect((await db.select().from(plans).where(eq(plans.id, plan.id)))[0]).toMatchObject({ request: args.newRequest, templateId: 'local-outing' });
+
+    const [privateConv] = await db.insert(conversations).values({ provider: 'linq', sendingLine: '+15125550000', externalChatId: 'private-alex', kind: 'private' }).returning();
+    await replan.run(actorCtx(u.Mark!, 'private', privateConv!.id), { reason: 'private appointment', newRequest: null, kind: null });
+    expect((await db.select().from(plans).where(eq(plans.id, plan.id)))[0]).toMatchObject({ request: args.newRequest, templateId: 'local-outing' });
+    const repairJobs = await db.select().from(jobs).where(eq(jobs.kind, 'repair'));
+    expect((repairJobs.at(-1)!.payload as { reason: string }).reason).toBe("a participant's constraints changed");
+    await expect(replan.run(actorCtx(u.Mark!, 'private', privateConv!.id), { ...args, newRequest: 'Go bowling with Mark' })).rejects.toThrow('Only the organizer');
+    await replan.run(actorCtx(u.Alex!, 'private', privateConv!.id), { ...args, newRequest: 'Go bowling this weekend with Mark' });
+    expect((await db.select().from(plans).where(eq(plans.id, plan.id)))[0]!.request).toBe('Go bowling this weekend with Mark');
   });
 });
 

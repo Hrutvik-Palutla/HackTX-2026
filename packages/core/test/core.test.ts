@@ -106,6 +106,14 @@ describe('plan lifecycle', () => {
     expect(next.version.versionNumber).toBe(version.versionNumber + 1);
   });
 
+  it('persists an updated request and template when repairing a plan', async () => {
+    const { db, plan } = await votingPlan();
+    const repaired = await requestRepair(db, plan.id, 0, 'activity changed', { request: 'Watch Dune this weekend in Austin', templateId: 'movie-night' });
+    expect(repaired).toMatchObject({ request: 'Watch Dune this weekend in Austin', templateId: 'movie-night', inputRevision: 1, selectedOptionId: null });
+    const [stored] = await db.select().from(plans).where(eq(plans.id, plan.id));
+    expect(stored).toMatchObject({ request: 'Watch Dune this weekend in Austin', templateId: 'movie-night' });
+  });
+
   it('records own votes, rejects stale-version votes, reports ties', async () => {
     const { db, u, plan, version, options } = await votingPlan();
     const [A, B] = options;

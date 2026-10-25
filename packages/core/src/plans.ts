@@ -96,7 +96,7 @@ export async function bumpRevision(db: Db, planId: string, expectedRevision: num
  * A material change: new revision, plan back to `planning`, fresh repair job. Old version/poll become stale
  * because publishVersion supersedes them and votes require the active version.
  */
-export async function requestRepair(db: Db, planId: string, expectedRevision: number, reason: string) {
+export async function requestRepair(db: Db, planId: string, expectedRevision: number, reason: string, change?: { request?: string; templateId?: 'movie-night' | 'local-outing' }) {
   return db.transaction(async (tx) => {
     const [cur] = await tx.select().from(plans).where(eq(plans.id, planId));
     if (!cur) throw notFound();
@@ -104,9 +104,10 @@ export async function requestRepair(db: Db, planId: string, expectedRevision: nu
       throw new AppError('UNRESOLVED', `Plan in ${cur.status} cannot be repaired automatically`);
     }
     const row = await bumpRevision(tx, planId, expectedRevision, { status: 'planning' });
-    await tx.update(plans).set({ selectedOptionId: null }).where(eq(plans.id, planId));
+    await tx.update(plans).set({ selectedOptionId: null, ...change, updatedAt: new Date() }).where(eq(plans.id, planId));
     await enqueue(tx, { kind: 'repair', planId, dedupeKey: `repair:${planId}:${row.inputRevision}`, payload: { planId, inputRevision: row.inputRevision, reason } });
-    return row;
+    const [updated] = await tx.select().from(plans).where(eq(plans.id, planId));
+    return updated!;
   });
 }
 

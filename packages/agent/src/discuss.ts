@@ -12,11 +12,12 @@ import { LimitError, RunRecorder } from './recorder';
 import { chatMembers, friendsAmong, toolsFor, type ToolCtx } from './tools';
 
 export const NO_REPLY = 'NO_REPLY';
+export const GROUP_INTRO = 'How can I help?';
 const HISTORY = 20;
 // State-changing tools that should succeed at most once per incoming message.
 const ONCE_PER_MESSAGE = new Set(['start_plan', 'respond_friend_request', 'record_vote', 'propose_selection', 'request_replan']);
 
-export type InboundJob = { encryptedInbound: string } | { sendingLine: string; message: InboundMessage } | { web: { messageId: string } };
+export type InboundJob = { encryptedInbound: string } | { sendingLine: string; message: InboundMessage; joinedGroup?: boolean } | { web: { messageId: string } };
 type Deps = { db: Db; muse: Muse };
 
 export async function handleInbound(deps: Deps, job: InboundJob) {
@@ -53,8 +54,11 @@ export async function handleInbound(deps: Deps, job: InboundJob) {
     replyToProviderMessageId: m.replyToMessageId, occurredAt: new Date(m.occurredAt),
   }).onConflictDoNothing();
   const [stored] = await db.select().from(messages).where(and(eq(messages.conversationId, conv.id), eq(messages.providerMessageId, m.messageId)));
-  if (!userId) return { status: 'unknown_sender' as const, conversationId: conv.id }; // Part 3 sends the signup/link prompt
-  return converse(deps, conv, stored!, userId);
+  if (!userId) {
+    if (job.joinedGroup && conv.kind === 'group') await postToConversation(db, conv, GROUP_INTRO, { effectKey: `intro:${conv.id}` });
+    return { status: 'unknown_sender' as const, conversationId: conv.id };
+  }
+  return converse(deps, conv, stored!, userId, !!job.joinedGroup);
 }
 
 async function converse(
@@ -62,8 +66,13 @@ async function converse(
   conv: typeof conversations.$inferSelect,
   stored: typeof messages.$inferSelect,
   userId: string,
+  joinedGroup = false,
 ) {
   const kind = conv.kind as 'group' | 'private';
+  const [existingReply] = await db.select({ id: messages.id }).from(messages).where(and(
+    eq(messages.conversationId, conv.id), eq(messages.providerMessageId, `agent:reply:${stored.id}`),
+  ));
+  if (existingReply) return { status: 'ok' as const, replied: true };
   const actor: ActorContext = {
     userId, source: kind === 'group' ? 'group_message' : 'private_message', conversationId: conv.id, sourceMessageId: stored.id,
   };
@@ -128,6 +137,7 @@ If context.openPlans contains multiple plans, ask which one they mean before usi
 If start_plan reports people who aren't connected, ask for their phone numbers PRIVATELY. Pass the supplied contacts in start_plan.friendContacts along with ALL intended names; the tool creates invitations and holds the plan until acceptance. Never omit an intended person to get past this gate.
 After start_plan succeeds, if its status is waiting_connections explain that invitations are queued and planning waits for acceptance. Otherwise reply briefly that you're finding options (the app posts them). Don't ask about times unless the request has no time frame at all.
 When someone's availability or constraints change, record it (record_availability etc.) and call request_replan if a current option no longer works; say you're updating the options.
+When the group changes the activity, call request_replan with newRequest containing the full updated request (including relevant time/location details) and kind set to movie-night or local-outing when the activity type changes.
 After propose_selection succeeds, confirm the option and who's coming, then ask who will pay for everyone (you may suggest the organizer; never assign it). Nothing is booked or charged yet.
 Call confirm_buyer only when the sender themself says they will pay; someone else nominating them is not enough, so ask that person to confirm.
 After the decision, put seat wishes into get_quote's seatPreference; do not use record_preference or record_availability for them (that re-plans and clears the selection). Ask about seats only if the group hasn't said; default is seats together near the center.
@@ -145,6 +155,8 @@ Message ids in brackets can be cited as evidence.` },
     const replied = !!text && text !== NO_REPLY;
     if (replied) {
       await postToConversation(db, conv, text.slice(0, 1500), { effectKey: `reply:${stored.id}`, planId: plan?.id ?? null, privateUserId: userId });
+    } else if (joinedGroup && kind === 'group') {
+      await postToConversation(db, conv, GROUP_INTRO, { effectKey: `intro:${conv.id}` });
     }
     return { status: 'ok' as const, replied };
   } catch (e) {
