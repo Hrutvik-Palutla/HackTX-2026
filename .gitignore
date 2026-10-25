@@ -1,8 +1,16 @@
 node_modules/
-.next/
+.env
+.env.*
 .env*
 !.env.example
+.next/
+dist/
+coverage/
+.part4-data/
 *.tsbuildinfo
+*.log
+.DS_Store
 playwright-report/
 test-results/
 .vultr-private/
+__pycache__/

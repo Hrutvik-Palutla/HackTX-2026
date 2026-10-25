@@ -1,0 +1,7 @@
+{
+  // The worker imports Part 4's discovery, which uses `.ts` import paths and is written against a less strict
+  // index-access setting; Part 2 packages are still checked strictly by the root tsconfig.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "noUncheckedIndexedAccess": false, "allowImportingTsExtensions": true, "noEmit": true },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

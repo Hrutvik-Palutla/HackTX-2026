@@ -12,6 +12,7 @@ import { AppShell, PageHeading } from "./app-shell";
 import { PlanNavigation } from "./plan-navigation";
 import { Feedback } from "./feedback";
 import { PreviewApp } from "./preview-app";
+import { DropNotebook, CommonGroundPicker, QuestPanel, RecipeEditor, type Ground } from "./standout-panel";
 import { api, accountApi, ApiError } from "@/lib/api";
 import {
   money,
@@ -97,6 +98,7 @@ export function MuseApp({
   const [dataLoading, setDataLoading] = useState(false);
   const [request, setRequest] = useState("");
   const [selectedFriends, setSelectedFriends] = useState<string[]>([]);
+  const [commonGround, setCommonGround] = useState<Ground | null>(null);
   const loadSession = useCallback(async () => {
     try {
       const response = await fetch("/api/auth/get-session", {
@@ -532,6 +534,7 @@ export function MuseApp({
               {dataLoading && <p role="status">Loading…</p>}
               {view === "plans" && (
                 <>
+                  <DropNotebook />
                   <div className="dashboard-grid">
                     <div>
                       <div className="section-title">
@@ -584,6 +587,7 @@ export function MuseApp({
                                 request,
                                 participantUserIds: selectedFriends,
                                 mode: "live",
+                                ...(commonGround ? { commonGroundId: commonGround.id } : {}),
                               }),
                             });
                             const createdId = result.planId ?? result.id;
@@ -627,6 +631,7 @@ export function MuseApp({
                             </label>
                           ))}
                         </fieldset>
+                        <CommonGroundPicker friendIds={selectedFriends} onPick={(ground) => { setCommonGround(ground); if (ground) setRequest(ground.theme); }} />
                         <button disabled={busy}>Create plan</button>
                       </form>
                     </aside>
@@ -792,6 +797,7 @@ export function MuseApp({
                   </p>
                   {view === "detail" && (
                     <>
+                      <QuestPanel planId={id!} userId={session!.user.id} status={plan.status} />
                       <form
                         className="form-panel"
                         onSubmit={(e) => {
@@ -981,6 +987,8 @@ export function MuseApp({
                   )}
                   {view === "payment" && payment && (
                     <section className="panel">
+                      {!payment.buyerUserId && <><p>No checkout lead yet. Volunteering does not authorize a purchase.</p><button disabled={busy} onClick={() => void perform(async () => { await api(`/plans/${id}/buyer`, { method: 'POST', body: JSON.stringify({ expectedRevision: plan.revision }) }); await loadData(); setNotice('You are handling checkout. No purchase has been made.'); })}>I’ll handle checkout</button></>}
+                      {payment.buyerUserId === session?.user.id && safeUrl(payment.handoffUrl) && <div className="notice"><p>Use the sourced merchant website for checkout. SideQuest has not reserved or purchased anything.</p><a className="button" href={safeUrl(payment.handoffUrl)!} target="_blank" rel="noreferrer">Open merchant website ↗</a></div>}
                       <h2>
                         {payment.quote?.mode === "test" ||
                         payment.booking?.mode === "test" ||
@@ -1125,22 +1133,7 @@ export function MuseApp({
                   <section className="panel">
                     <h2>Templates</h2>
                     {templates?.length === 0 && <p>No templates yet.</p>}
-                    {templates?.map((t) => (
-                      <div key={t.id}>
-                        <h3>
-                          {t.id} · v{t.version}
-                        </h3>
-                        <p>
-                          {t.model} · Schema {t.outputSchemaVersion}
-                        </p>
-                        <p>Tools: {t.allowedTools.join(", ")}</p>
-                        <p>
-                          Limits: {t.limits.maxTurns} turns ·{" "}
-                          {t.limits.maxTools} tool calls ·{" "}
-                          {t.limits.maxSearches} searches
-                        </p>
-                      </div>
-                    ))}
+                    {templates?.map((t) => <RecipeEditor key={`${t.id}:${t.version}`} recipe={t} onSaved={() => void loadData()} />)}
                   </section>
                   <section className="panel">
                     <h2>Redacted runs</h2>

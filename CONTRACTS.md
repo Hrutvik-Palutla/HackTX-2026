@@ -1,5 +1,23 @@
 # Shared Technical Contracts
 
+## Standout integration addendum — October 25
+
+- `GET /api/demo` is a read-only public fixture, not an authentication bypass: only a selected test-mode plan from `sidequest_demo_alex` qualifies; every member must have a `sidequest_demo_` ID, `@demo.sidequest.invalid` email and no phone. No arbitrary plan ID is accepted. The UI labels synthetic people, recorded provider results and simulated completions. Tests reject real phones or email addresses in that fixture.
+- `POST /api/plans/:id/buyer` lets a verified member volunteer only themselves for the current decision, with `expectedRevision`. A different existing buyer cannot be replaced through this endpoint. Part 4 uses the same verified session/membership and current selected plan, with a Postgres repository. Direct wallet purchasing is disabled; sourced merchant handoff is explicit and does not claim a reservation.
+- Browser voice uploads decode/resample to mono PCM16 WAV at 16 kHz. The server validates RIFF chunks, PCM16, mono, 16/24 kHz, duration <=120 seconds and <=8 MB before the Meta request. Text is the fallback. Image/voice provider costs are explicitly unknown and excluded from Spark cost estimates.
+- Quest JSON returns an image URL instead of repeatedly transferring inline PNG data during progress polling. `GET /api/plans/:id/quest/art` requires the same verified membership and exact current version/option. The public synthetic fixture uses its separately guarded image endpoint.
+
+- Template IDs now include `drop-extraction`, `common-ground`, and `quest`. The existing `agent_templates` table persists full versioned configurations. Server code validates tool allowlists and bounded limits; planner, conversation, extraction, matching, and quest runs load the current saved recipe. Existing runs retain the recipe version used.
+- `GET/POST /api/drops`; `PATCH/DELETE /api/drops/:id`: authenticated owner only, same-origin mutations. Extraction receives the submitted note/link text, never an implicitly fetched page. Evidence is checked against the submitted text. Chips start unconfirmed and unshared; edits preserve evidence and IDs, and sharing requires confirmation.
+- `POST /api/common-ground` takes connected `friendIds`. Only confirmed shared chips are sent to Muse. Every cited chip must exist, with at least two distinct owners. Names and quotes are joined by code, not invented by the model. `POST /api/plans` optionally takes `commonGroundId`; member IDs and current sharing are rechecked, then the exact grounded query reaches SerpApi. `GET /api/plans/:id/common-ground` is membership protected and suppresses revoked evidence.
+- `GET/POST/PATCH /api/plans/:id/quest`: membership required. The quest belongs to the selected option and version; changed or removed selections invalidate it. Generation uses a fixed three-photo/two-riddle format, current shared interests, and the selected sourced option. Progress updates lock the plan row; completions carry an authenticated user ID and timestamp. Only the completing user can undo their completion. A recap displays their current group-visible name.
+- `GET/PUT /api/studio/templates/:id`: team allowlist enforced on the server. PUT carries `expectedVersion`, instructions, allowed tools, and limits; concurrent saves reject stale versions. `TEAM_ADMIN_PHONES` may designate teammates, but only after a verified session proves phone ownership.
+- Optional media: `POST /api/drops/photo` accepts an inline PNG/JPEG/WebP under 1 MB; no remote URL is fetched. `POST /api/drops/voice` accepts a WAV under 8 MB. Both return a private draft for owner review, not automatically shared facts. `POST /api/plans/:id/quest/art` generates and caches a PNG card for the current quest. Each account has eight optional media requests in this hackathon build. Voice/Image costs unavailable from those endpoints are explicitly labeled and excluded from the Spark estimate.
+- Storage reuses encrypted `private_facts` with internal kinds `interest_drop`, `common_ground`, `quest`, and `media_usage`. These internal records never enter the existing private-constraint parser or another user's private API response. No new database service or schema migration is needed.
+- Plan selection now requires **all current participants** to have an acceptable vote for the same option/version. It cannot silently drop a participant. Vote updates and decisions lock the plan row to serialize competing decisions and approval changes. Explicit roster edits remain the existing organizer action.
+- Calendar writes check membership and current selected version, recheck the caller's current busy intervals, and reject conflicts or unavailable verification. Retrying an already-synced version returns its existing event ID. ICS remains the manual-review fallback; creation never implies a reservation.
+- Deployment includes the Node 24 worker under Compose's `live` profile, encrypted GitHub runtime settings, preserved server environment/certificate volumes, and revision-bearing `/health/live` plus database `/health/ready` checks. Secrets remain outside source control.
+
 Proposed v1 contract for the architecture in [ARCHITECTURE.md](ARCHITECTURE.md). Part 2 (Agent & Backend) owns this file, `packages/contracts`, and shared database migrations; other parts supply their feature requirements. Cross-part schema changes are reviewed with affected owners. See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the four selectable parts and route ownership. The declarations below describe our application, not vendor SDK methods. Implement them as Zod schemas and inferred TypeScript types. Dependency versions and actual vendor payload fixtures are pinned during the access spikes.
 
 ## 1. Representation and invariants
@@ -220,7 +238,7 @@ Use foreign keys and timestamps throughout. Sensitive values are encrypted with 
 | `friend_invites` | Inviter, encrypted recipient phone + keyed lookup digest, token hash, state, expires_at; acceptance binds the authenticated recipient. |
 | `conversations` | Provider, external chat ID, sending line, kind, active_plan_id; unique provider/line/chat. |
 | `conversation_members` | Conversation, messaging identity or unresolved handle, current membership. Never used alone as friendship proof. |
-| `plans` | Organizer, request, city/zone/date window, status, input_revision, active_version_id, selected_option_id, mode. |
+| `plans` | Organizer, request, template_id (`movie-night`/`local-outing`), city/zone/date window, status, input_revision, active_version_id, selected_option_id, mode. |
 | `plan_participants` | Plan, user nullable while invited, invite reference, requested name, attendance state; unique `(plan,user)` when resolved. All resolve before proposals. |
 | `plan_conversations` | Plan, conversation, audience/owner; one group or several private conversations can point to the same plan. |
 | `messages` | Provider message ID, conversation, sender, timestamp, encrypted private body or public body, reply reference; unique provider/line/message. Store only received context needed for the plan. |
@@ -229,7 +247,7 @@ Use foreign keys and timestamps throughout. Sensitive values are encrypted with 
 | `availability_snapshots` | User/plan, normalized intervals, source type, fetched_at, validity/errors; never calendar titles. |
 | `sources`, `candidates` | Normalized source metadata and candidate facts/evidence; search/extract cache keys and expiry. Raw payloads redacted and size bounded. |
 | `plan_versions`, `plan_options` | Immutable version number + input revision + options; unique `(plan,version_number)` and `(version,label)`. |
-| `polls`, `votes` | Poll message ID to version mapping; unique vote `(version,user,option)`; favorite per `(version,user)`; superseded poll flag. |
+| `polls`, `votes`, `vote_states` | Poll message ID to version mapping; superseded poll flag. `votes`: one row per acceptable option, unique `(version,user,option)`. `vote_states`: favorite, noneAcceptable, and objection per `(version,user)`. |
 | `plan_decisions` | Selection, named attendees, author/evidence message IDs, version, recorded_at. |
 | `booking_quotes`, `buyer_authorizations`, `bookings` | Types above; unique submitted authorization/effect binding; actual merchant status separate from wallet status. |
 | `wallet_connections` | User, provider, encrypted auth context, status; no card number/CVC. |
@@ -239,7 +257,7 @@ Use foreign keys and timestamps throughout. Sensitive values are encrypted with 
 | `jobs` | Kind, plan, dedupe_key, payload, run_after, lease_until, attempts, state; unique dedupe_key. Index runnable jobs. |
 | `outbox` | Typed recipient, plan/version, effect key, encrypted private body, provider message ID, delivery status. OTP bodies expire and are removed after delivery/expiry. |
 | `external_effects` | Unique operation key, kind, plan/quote, reserved/inflight/confirmed/unknown, provider request ID, reconciliation data. |
-| `agent_templates`, `agent_runs`, `run_steps` | Template configuration/version, model, input revision, redacted outcomes, token/search/cost counters. No raw private prompts. |
+| `agent_templates`, `agent_runs`, `run_steps` | Template configuration/version, model, run task (`plan`/`repair`/`discuss`), input revision, redacted outcomes, token/search/cost counters. No raw private prompts. |
 | `usage_reservations` | Provider, run, reserved/actual cost or quota units; prevents concurrent runs overspending local envelopes. |
 
 One relational store is intentional. Use JSONB for evolving provider payloads/typed fact values, not for relationships that need membership checks or uniqueness. Restrict app-side repositories by actor and return projection-specific DTOs. Do not expose a generic SQL tool to Muse.
@@ -269,12 +287,14 @@ All routes below are `/api` paths except health. Use `{data,revision?}` for succ
 | `DELETE /calendar/connection` | Disconnect and delete token | Own session |
 | `POST /plans` | `{request,participantUserIds?,participantNames?,conversationId?,mode}` -> plan/job | Requester; core resolves friends before planning |
 | `GET /plans`, `GET /plans/:id` | Membership-filtered public projections | Plan member/organizer |
-| `POST /plans/:id/messages` | `{text,scope:'group'\|'private',expectedRevision}` | Member; private scope belongs to actor |
+| `POST /plans/:id/messages` | `{text,scope:'group'\|'private'}` -> message ID; agent replies asynchronously in the same web thread | Member; private scope belongs to actor |
+| `GET /plans/:id/messages` | Plan's web group thread + caller's own private thread | Member; never another member's private thread |
 | `PUT /plans/:id/vote` | Version + acceptable IDs/favorite/none | Actor's own vote only |
 | `POST /plans/:id/decision` | Version, option, named attendees, evidence IDs | Member; core verifies group context; no financial authority implied |
 | `PATCH /plans/:id/participants` | Added/removed users + expectedRevision | Organizer before booking; new users must connect |
 | `POST /plans/:id/close` | expectedRevision | Organizer for unbooked plan |
 | `GET /plans/:id/private` | Own private projection | Actor only |
+| `PUT /plans/:id/private` | `{fact: PrivateFactValue, expectedRevision?}`: manual availability, limit, or preference (no-calendar fallback); re-plans if options exist | Actor only; owner is always the session user |
 | `GET /plans/:id/payment` | Own share/buyer view | Projection-specific |
 | `POST /plans/:id/quotes` | `{versionId,optionId,buyerUserId,seatPreference?,expectedRevision}` -> job | Member; buyer confirms their role |
 | `POST /wallet/connect` | Start provider user-link flow | Buyer account + session-bound nonce |
@@ -292,7 +312,7 @@ All routes below are `/api` paths except health. Use `{data,revision?}` for succ
 | `GET /studio/templates`, `GET /studio/runs` | Redacted data | Team allowlist |
 | `GET /health/live`, `GET /health/ready` | Minimal health result | Public, no private configuration |
 
-Conflict rules: stale revision/version returns `409 STALE_PLAN`; unauthorized actor is `403`; invalid fields `400`; unresolved prerequisites `422`; local spend/quota ceiling `429 BUDGET_LIMIT` or `429 QUOTA_LIMIT`. A private resource not visible to the caller returns a generic `404`. Phone signup/login responses are generic. External provider errors are mapped to redacted retryable/nonretryable errors.
+Conflict rules: stale revision/version returns `409 STALE_PLAN`; unauthorized actor is `403`; invalid fields `400`; unresolved prerequisites `422`; local spend/quota ceiling `429 BUDGET_LIMIT` or `429 QUOTA_LIMIT`; upstream provider failure `502 PROVIDER`; unexpected server error `500 INTERNAL`. A private resource not visible to the caller returns a generic `404`. Phone signup/login responses are generic. External provider errors are mapped to redacted retryable/nonretryable errors.
 
 ## 7. Normalized events and adapter ports
 
@@ -358,7 +378,7 @@ Adapters may report a capability false even when the vendor advertises it: the a
 
 ## 8. Jobs, tool effects, and permission checks
 
-Job kinds: `process_inbound`, `resume_connections`, `plan`, `repair`, `send_outbox`, `poll_reminder`, `refresh_wallet`, `quote_booking`, `submit_booking`, `reconcile_booking`, `sync_calendar`, `create_reimbursements`, `handle_change`.
+Job kinds: `process_inbound`, `resume_connections`, `plan`, `repair`, `send_outbox`, `poll_reminder`, `refresh_wallet`, `quote_booking`, `submit_booking`, `reconcile_booking`, `sync_calendar`, `create_reimbursements`, `handle_change`, `publish_poll` (payload `{planId, versionId, conversationId, labels}`; Part 3 posts the native poll in A, B, C order and calls `registerPoll`).
 
 For every job: claim lease -> read current context/revision -> bounded external work -> validate -> short transaction to compare revision, write state/effects, and enqueue outgoing work -> complete. Refresh the lease while active. Reclaimed jobs must tolerate repeating read work; mutations use effect keys and authoritative provider reconciliation.
 

@@ -14,7 +14,13 @@
     "next": "^15.5.6",
     "pg": "^8.23.1",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "@hacktx/api": "workspace:*",
+    "@hacktx/db": "workspace:*",
+    "@hacktx/core": "workspace:*",
+    "@hacktx/fulfillment": "workspace:*",
+    "@hacktx/integrations": "workspace:*",
+    "drizzle-orm": "0.45.4"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

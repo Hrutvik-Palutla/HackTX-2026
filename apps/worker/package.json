@@ -1,0 +1,19 @@
+{
+  "name": "@hacktx/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx --env-file-if-exists=../../.env --env-file-if-exists=../../.env.local src/index.ts"
+  },
+  "dependencies": {
+    "@hacktx/agent": "workspace:*",
+    "@hacktx/contracts": "workspace:*",
+    "@hacktx/core": "workspace:*",
+    "@hacktx/db": "workspace:*",
+    "@hacktx/integrations": "workspace:*"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.11"
+  }
+}

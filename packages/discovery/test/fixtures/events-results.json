@@ -1,0 +1,45 @@
+{
+  "search_metadata": { "id": "fixture-events-search" },
+  "events_results": [
+    {
+      "title": "Austin Example Concert",
+      "type": "Live music performance",
+      "date": { "start_date": "Nov 8", "when": "Sun 6:00 PM" },
+      "time": "6:00 PM",
+      "venue": "Example Hall",
+      "address": ["Example Hall", "Austin, TX"],
+      "price": "$24",
+      "extracted_price": 24,
+      "link": "https://tickets.example.test/event/1"
+    },
+    {
+      "title": "Date Label Without Year",
+      "date": "Nov 8",
+      "address": ["Austin, TX"]
+    },
+    {
+      "title": "Neighborhood Is Not A Street Address",
+      "date": "Nov 8",
+      "time": "7:00 PM",
+      "venue": "Neighborhood Hall",
+      "address": ["Neighborhood Hall", "Downtown Austin"]
+    },
+    {
+      "title": "Outside Date",
+      "date": { "start_date": "Nov 9", "when": "Mon 6:00 PM" },
+      "time": "6:00 PM",
+      "venue": "Other Hall"
+    },
+    {
+      "title": "At Exclusive Window End",
+      "date": { "start_date": "Nov 9", "when": "Mon 12:00 AM" },
+      "time": "12:00 AM",
+      "venue": "Next Day Hall"
+    },
+    {
+      "date": { "start_date": "Nov 8", "when": "Sun 5:00 PM" },
+      "time": "5:00 PM",
+      "venue": "Untitled Result"
+    }
+  ]
+}

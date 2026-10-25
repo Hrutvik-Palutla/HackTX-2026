@@ -1,0 +1,25 @@
+{
+  "name": "@hacktx/integrations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./serpapi": "./serpapi.ts",
+    "./link-wallet": "./link-wallet.ts",
+    "./reimbursements": "./reimbursements.ts",
+    "./messaging/claw": "./messaging/claw-adapter.ts",
+    "./calendar": "./calendar-http.ts",
+    "./google-calendar": "./google-calendar.ts",
+    "./calendar-jobs": "./calendar-jobs.ts",
+    "./messaging/otp": "./messaging/otp.ts"
+  },
+  "dependencies": {
+    "@hacktx/contracts": "workspace:*",
+    "@hacktx/core": "workspace:*",
+    "@hacktx/db": "workspace:*",
+    "drizzle-orm": "0.45.4"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.11"
+  }
+}

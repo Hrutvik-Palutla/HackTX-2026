@@ -32,6 +32,21 @@
   --text-section: 1rem;
   --motion-fast: 180ms;
 }
+
+.standout-notebook { margin-bottom: 2rem; }
+.drop-card, .common-ground-card, .quest-challenge, .recipe-editor { border: 1px solid #e8e4f4; border-radius: 16px; padding: 1.2rem; margin: 1rem 0; }
+.interest-chip { padding: 1rem 0; border-bottom: 1px solid #efedf5; }
+.interest-chip label, .recipe-editor label { display: grid; gap: .5rem; }
+.interest-chip .choice { display: flex; }
+.interest-chip blockquote, .ground-evidence blockquote { margin: .6rem 0; padding-left: 1rem; border-left: 3px solid #c8bcff; color: #625d76; font-size: .9rem; }
+.standout-actions { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 1rem; }
+.common-ground-card { background: #f8f5ff; }
+.ground-evidence ul { padding-left: 1.2rem; }
+.quest-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+.quest-challenge { margin: 0; }
+.quest-panel progress { width: 100%; accent-color: #7959ec; margin: 1rem 0; }
+.quest-recap { padding: 1.5rem; background: #f0ebff; border-radius: 16px; margin-top: 1rem; }
+.recipe-editor summary { cursor: pointer; padding: .4rem 0; }
 * {
   box-sizing: border-box;
 }
@@ -982,3 +997,12 @@ pre {
     transform: none;
   }
 }
+
+.quest-art { display:block; width:min(100%, 420px); aspect-ratio:1; object-fit:cover; border-radius:20px; margin:1rem 0; }
+.landing-hero { padding: 3rem 0; max-width: 900px; }
+.landing-hero h1 { font-size: clamp(2rem, 5vw, 3.5rem); line-height:1.12; letter-spacing:-.035em; margin: 1rem 0 1.5rem; }
+.landing-hero > p { font-size:1.15rem; line-height:1.7; max-width:680px; color:#625d76; }
+.landing-steps { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:1rem; }
+.landing-steps > * { min-width:0; }
+.app[data-view="demo"] .panel { max-width:none; }
+.app[data-view="demo"] .back { white-space:normal; overflow-wrap:anywhere; }

@@ -46,6 +46,21 @@ services:
       - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+  worker:
+    image: sidequest-worker:local
+    profiles: [live]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+      args:
+        SOURCE_REVISION: ${DEPLOY_RELEASE:-local}
+    init: true
+    restart: unless-stopped
+    env_file:
+      - ${APP_ENV_FILE:-.env.production}
+    environment:
+      NODE_ENV: production
 volumes:
   caddy_data:
   caddy_config:
