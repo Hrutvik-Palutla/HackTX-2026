@@ -34,7 +34,7 @@ export const templates = {
 The group wants to see a specific movie. Keep the movie fixed unless the group explicitly changes it.
 Make the three options differ usefully by theater, time, format, and price where real data allows.`,
     allowedTools: CONVERSATION_TOOLS,
-    limits: { maxTurns: 52, maxTools: 100, maxSearches: 80 },
+    limits: { maxTurns: 16, maxTools: 30, maxSearches: 12 },
     outputSchemaVersion: 1,
   }),
   'local-outing': AgentTemplate.parse({
@@ -46,7 +46,7 @@ The group has a broad idea (e.g. "something this weekend"). Offer three distinct
 group's city, shared interests, and time window: roughly a cheaper, a balanced, and a more premium choice when
 real prices allow, but timing and experience differences can matter more than price.`,
     allowedTools: CONVERSATION_TOOLS,
-    limits: { maxTurns: 52, maxTools: 100, maxSearches: 80 },
+    limits: { maxTurns: 16, maxTools: 30, maxSearches: 12 },
     outputSchemaVersion: 1,
   }),
   'drop-extraction': AgentTemplate.parse({

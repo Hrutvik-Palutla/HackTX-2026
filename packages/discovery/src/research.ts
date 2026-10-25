@@ -6,7 +6,7 @@ import type { ResearchAction, ResearchPort, ResearchPageEvidence, ResearchSearch
 import type { SerpApiClient } from './serpapi.ts';
 
 type Row = Record<string, unknown>;
-type BrowserRequest = { redirectedFrom(): BrowserRequest | null; method(): string; url(): string; headers(): Record<string, string> };
+type BrowserRequest = { redirectedFrom(): BrowserRequest | null; method(): string; url(): string; headers(): Record<string, string>; resourceType(): string };
 type BrowserRoute = { request(): BrowserRequest; abort(): Promise<void>; continue(): Promise<void>; fulfill(options: { status: number; contentType: string; body: string }): Promise<void> };
 type BrowserResponse = { headers(): Record<string, string>; body(): Promise<Uint8Array> };
 type BrowserContext = { newPage(): Promise<Record<string, (...args: any[]) => any>> };
@@ -125,7 +125,8 @@ export class SerpApiResearch implements ResearchPort {
       const require = createRequire(new URL('../../../apps/booking-worker/package.json', import.meta.url));
       const { chromium } = require('playwright') as { chromium: { launch(options: unknown): Promise<any> } };
       const task = (async () => {
-        const activeBrowser = await chromium.launch({ headless: true, args: ['--no-sandbox'], timeout }) as ResearchBrowser;
+        // Docker's 64 MB /dev/shm crashes Chromium on heavier pages ("browser has been closed") without this flag.
+        const activeBrowser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'], timeout }) as ResearchBrowser;
         browser = activeBrowser;
         const context = await activeBrowser.newContext({ javaScriptEnabled: true, acceptDownloads: false });
         const page = await context.newPage();
@@ -141,6 +142,8 @@ export class SerpApiResearch implements ResearchPort {
             requestCount++;
             let redirectDepth = 0;
             for (let prior = request.redirectedFrom(); prior; prior = prior.redirectedFrom()) redirectDepth++;
+            // Text is all we read: images, video and fonts only spend the byte budget.
+            if (overflow || ['image', 'media', 'font'].includes(request.resourceType())) return await route.abort();
             if (requestCount > 50 || redirectDepth > MAX_REDIRECTS || request.method() !== 'GET') return await route.abort();
             const next = await checkedUrl(request.url(), this.options.resolveHost);
             if (!['http:', 'https:'].includes(next.protocol) || isTransactionalPath(next)) return await route.abort();
@@ -160,7 +163,8 @@ export class SerpApiResearch implements ResearchPort {
             const length = Number(response.headers()['content-length'] ?? 0);
             if (length > 0) received += length;
             else received += (await response.body()).byteLength;
-            if (received > maxBytes) { overflow = true; await browser?.close(); }
+            // Stop loading more, but keep reading what arrived; closing the browser here broke every later page call.
+            if (received > maxBytes && !overflow) { overflow = true; await page.evaluate(() => window.stop()).catch(() => undefined); }
           })();
           responseJobs.push(job.catch(() => undefined));
         });
@@ -196,7 +200,7 @@ export class SerpApiResearch implements ResearchPort {
           if (stable < 3) await new Promise(resolve => setTimeout(resolve, 200));
         }
         await Promise.all(responseJobs);
-        if (overflow) throw new Error(`Rendered page exceeded the ${maxBytes} byte limit`);
+        if (!lastText.trim() && overflow) throw new Error(`Rendered page exceeded the ${maxBytes} byte limit before any text loaded`);
         const final = await checkedUrl(page.url(), this.options.resolveHost);
         const links: Array<{ text: string; url: string }> = [];
         for (const link of result.links) {
@@ -208,7 +212,8 @@ export class SerpApiResearch implements ResearchPort {
         }
         return { url: final.href, title: text(result.title).slice(0, 300) || null, text: lastText, links, structuredDataText: result.structuredDataText };
       })();
-      const deadline = new Promise<never>((_, reject) => { timeoutId = setTimeout(() => reject(new Error('Browser page read timed out')), timeout); });
+      // Launch has its own timeout; the page gets the full read budget on top of it.
+      const deadline = new Promise<never>((_, reject) => { timeoutId = setTimeout(() => reject(new Error('Browser page read timed out')), timeout + 10_000); });
       return await Promise.race([task, deadline]);
     } finally {
       if (timeoutId) clearTimeout(timeoutId);

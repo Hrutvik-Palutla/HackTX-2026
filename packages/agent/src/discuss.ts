@@ -5,7 +5,7 @@
 import { and, desc, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 import { conversations, messages, messagingIdentities, planOptions, planParticipants, plans, user, type Db } from '@hacktx/db';
 import { InboundMessage, type ActorContext, type PlanOption, type ResearchPort } from '@hacktx/contracts';
-import { AGENT_HANDLE, AppError, activeTally, pendingRequestsFor, parseCity, listOwnFacts, open, postToConversation, publicPlan, seal } from '@hacktx/core';
+import { AGENT_HANDLE, AppError, activeTally, pendingRequestsFor, parseCity, listOwnFacts, open, postToConversation, publicPlan, seal, linkVerifiedPhones } from '@hacktx/core';
 import { loadTemplate } from '@hacktx/templates';
 import type { ChatMessage, Muse } from './muse';
 import { LimitError, RunRecorder } from './recorder';
@@ -41,6 +41,7 @@ export async function handleInbound(deps: Deps, job: InboundJob) {
   if (!conv) throw new Error('conversation upsert failed');
 
   // 2. Verified identity only. A display name or chat membership never identifies an account.
+  if (m.senderKind === 'phone') await linkVerifiedPhones(db, m.provider, [m.senderHandle]);
   const [ident] = await db.select().from(messagingIdentities).where(and(
     eq(messagingIdentities.provider, m.provider), eq(messagingIdentities.handle, m.senderHandle),
   ));
@@ -183,7 +184,13 @@ Message ids in brackets can be cited as evidence.` },
     }
     return { status: 'ok' as const, replied };
   } catch (e) {
-    if (e instanceof LimitError) { await rec.finish('limit', e.message); return { status: 'limit' as const }; }
+    if (e instanceof LimitError) {
+      await rec.finish('limit', e.message);
+      await postToConversation(db, conv, 'That needs more digging than I can do in one message. Can you narrow it down (a day, an area, or a specific place)?', {
+        effectKey: `agent-limit:${stored.id}`, planId: plan?.id ?? null, privateUserId: userId,
+      });
+      return { status: 'limit' as const, replied: true };
+    }
     await rec.finish('error', e instanceof Error ? e.message : String(e));
     // A permanent Muse 4xx is not fixed by retrying the same inbound job. Surface the
     // failure in its conversation so provider errors do not look like a dead listener.
@@ -212,7 +219,12 @@ export async function runToolLoop(input: { muse: Muse; rec: RunRecorder; ctx: To
   const msgs = [...input.messages];
   const done = new Set<string>();
   for (;;) {
-    rec.charge('turn');
+    try { rec.charge('turn'); } catch (e) {
+      // Out of turns, time or per-run cost: reply with research already finished rather than going silent.
+      const research = lastResearchAnswer(msgs);
+      if (e instanceof LimitError && research) return research;
+      throw e;
+    }
     const { message } = await rec.step('model', 'chat', () => muse.chat({ messages: msgs, tools: specs }),
       (r) => ({ summary: r.message.tool_calls?.length ? `${r.message.tool_calls.length} tool call(s)` : 'reply', usage: r.usage }));
     msgs.push(message);
@@ -274,4 +286,17 @@ async function recentPlanHistory(db: Db, userId: string, currentPlanId: string |
       groupSelection: selectedOption ? { title: selectedOption.title, startAt: selectedOption.startAt } : null });
   }
   return selected;
+}
+
+/** The newest research_public answer in this run, if any (already source-cited and sanitized for sharing). */
+function lastResearchAnswer(msgs: ChatMessage[]) {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i]!;
+    if (m.role !== 'tool' || typeof m.content !== 'string') continue;
+    try {
+      const parsed = JSON.parse(m.content) as { answer?: unknown; evidence?: unknown };
+      if (typeof parsed.answer === 'string' && Array.isArray(parsed.evidence)) return parsed.answer;
+    } catch { /* not JSON */ }
+  }
+  return null;
 }

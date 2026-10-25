@@ -116,7 +116,7 @@ export const TOOLS = [
     async run(ctx, args) {
       if (!ctx.research || !ctx.muse) return { error: 'UNAVAILABLE', message: 'Public research is not configured. Do not claim to have searched.' };
       const result = await runResearch({ muse: ctx.muse, research: ctx.research, question: args.question,
-        redactions: ctx.researchRedactions, maxSteps: 48, recorder: ctx.recorder });
+        redactions: ctx.researchRedactions, maxSteps: 6, recorder: ctx.recorder });
       for (const item of result.evidence) {
         const provider = 'engine' in item ? `serpapi_${item.engine}` : 'serpapi_extract';
         await ctx.db.insert(sources).values({ id: item.sourceId, url: item.url, title: 'Public research source',

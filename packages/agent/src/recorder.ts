@@ -8,6 +8,9 @@ import type { Usage } from './muse';
 
 // Total estimated Muse spend across all runs before new runs are refused (BUDGET_LIMIT). Credits are finite.
 const budgetUsd = () => Number(process.env.MUSE_BUDGET_USD ?? 20);
+// One message or planning job may not run away: past these, the next model turn stops the run with what it has.
+const runBudgetUsd = () => Number(process.env.MUSE_RUN_BUDGET_USD ?? 0.5);
+const runDeadlineMs = () => Number(process.env.MUSE_RUN_DEADLINE_MS ?? 90_000);
 
 export class LimitError extends Error {}
 
@@ -16,6 +19,8 @@ export class RunRecorder {
   turns = 0;
   tools = 0;
   searches = 0;
+  costUsd = 0;
+  private readonly startedAt = Date.now();
 
   private constructor(private db: Db, readonly runId: string, readonly template: AgentTemplate, readonly inputRevision: number) {}
 
@@ -32,6 +37,8 @@ export class RunRecorder {
   /** Call before a model turn / tool call / search; throws LimitError when the template budget is spent. */
   charge(kind: 'turn' | 'tool' | 'search') {
     const { maxTurns, maxTools, maxSearches } = this.template.limits;
+    if (kind === 'turn' && this.costUsd >= runBudgetUsd()) throw new LimitError(`run cost limit ${runBudgetUsd()} USD`);
+    if (kind === 'turn' && Date.now() - this.startedAt >= runDeadlineMs()) throw new LimitError(`run time limit ${runDeadlineMs() / 1000}s`);
     if (kind === 'turn' && ++this.turns > maxTurns) throw new LimitError(`turn limit ${maxTurns}`);
     if (kind === 'tool' && ++this.tools > maxTools) throw new LimitError(`tool limit ${maxTools}`);
     if (kind === 'search' && ++this.searches > maxSearches) throw new LimitError(`search limit ${maxSearches}`);
@@ -63,6 +70,7 @@ export class RunRecorder {
       estimatedCostUsd: String(usage?.estimatedCostUsd ?? 0),
     });
     if (usage) {
+      this.costUsd += usage.estimatedCostUsd;
       await this.db.update(agentRuns).set({
         inputTokens: sql`${agentRuns.inputTokens} + ${usage.inputTokens}`,
         outputTokens: sql`${agentRuns.outputTokens} + ${usage.outputTokens}`,

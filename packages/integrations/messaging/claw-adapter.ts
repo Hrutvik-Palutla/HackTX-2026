@@ -9,7 +9,7 @@ import {
   conversationMembers, conversations, friendInvites, inboundEvents, messages, messagingIdentities, outbox, planConversations, planParticipants,
   plans, user, externalEffects, type Db,
 } from '@hacktx/db';
-import { AGENT_HANDLE, AppError, configurePlanGroupCreator, enqueue, open, postToConversation, reserveEffect, seal, type Job } from '@hacktx/core';
+import { AGENT_HANDLE, AppError, configurePlanGroupCreator, enqueue, open, postToConversation, reserveEffect, seal, linkVerifiedPhones, type Job } from '@hacktx/core';
 import { OutboundRecipient, type InboundMessage, type MessagingPort } from '@hacktx/contracts';
 import { ClawMessengerClient, type ClawInboundMessage, type SendTarget } from './claw-messenger.ts';
 import { maybeGreetStranger } from './stranger.ts';
@@ -80,6 +80,7 @@ async function onGroupMessage(db: Db, sendingLine: string, m: ClawInboundMessage
 }
 
 async function syncMembers(db: Db, conversationId: string, handles: string[], complete = true) {
+  await linkVerifiedPhones(db, CLAW_PROVIDER, handles); // members with verified accounts get named, even before they speak
   const current = await db.select().from(conversationMembers).where(eq(conversationMembers.conversationId, conversationId));
   const idents = handles.length ? await db.select().from(messagingIdentities)
     .where(and(eq(messagingIdentities.provider, CLAW_PROVIDER), inArray(messagingIdentities.handle, handles))) : [];

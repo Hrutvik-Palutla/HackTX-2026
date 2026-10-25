@@ -51,3 +51,34 @@ describe('runResearch', () => {
     expect(result.answer).toContain('s1');
   });
 });
+
+describe('runResearch cost bounds', () => {
+  it('never re-sends raw SerpApi JSON or whole pages to the model, and stops at its tool-call cap', async () => {
+    const huge = 'x'.repeat(40_000);
+    let searches = 0;
+    const research: ResearchPort = {
+      async search(input) { searches++; return { sourceId: `s${searches}`, url: `https://search.test/${searches}`, fetchedAt: '2026-10-25T12:00:00.000Z', engine: 'google', query: input.query, text: huge, results: { organic_results: [{ snippet: huge }] } }; },
+      async read() { throw new Error('not used'); },
+    };
+    const sent: ChatMessage[][] = [];
+    // A model that keeps asking for one more search forever.
+    const muse: Muse = {
+      model: 'test',
+      async structured() { throw new Error('not used'); },
+      async chat({ messages }) {
+        sent.push(messages);
+        return { message: { role: 'assistant', content: null, refusal: null, tool_calls: [
+          { id: `c${sent.length}a`, type: 'function', function: { name: 'search_public_web', arguments: JSON.stringify({ query: `q${sent.length}a` }) } },
+          { id: `c${sent.length}b`, type: 'function', function: { name: 'search_public_web', arguments: JSON.stringify({ query: `q${sent.length}b` }) } },
+        ] } as never, usage };
+      },
+    };
+    const result = await runResearch({ muse, research, question: 'Find comedy shows', maxSteps: 48 });
+    expect(searches).toBeLessThanOrEqual(10);
+    expect(result.steps).toBeLessThanOrEqual(8);
+    for (const m of sent.flat().filter((m) => m.role === 'tool')) {
+      expect(String(m.content)).not.toContain('organic_results');
+      expect(String(m.content).length).toBeLessThan(4_500);
+    }
+  });
+});

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { z } from 'zod';
-import { agentRuns, conversations, jobs, messagingIdentities, outbox, planConversations, plans, runSteps, sources, voteStates } from '@hacktx/db';
+import { agentRuns, conversations, jobs, messagingIdentities, outbox, planConversations, plans, runSteps, sources, user, voteStates } from '@hacktx/db';
 import { createPlan, postToConversation, publicPlan, publishVersion, savePrivateFact } from '@hacktx/core';
 import { GROUP_INTRO } from '@hacktx/agent';
 import { fixtureDiscovery, handleInbound, runPlanJob, type ChatMessage, type Muse } from '@hacktx/agent';
@@ -273,6 +273,33 @@ describe('conversation', () => {
     const again = fakeMuse({ chat: [{ content: 'Got it Mark, B it is for you.' }] });
     await handleInbound({ db, muse: again }, { sendingLine: '+15125550000', message: inbound });
     expect((await db.select().from(outbox)).filter((o) => o.effectKey.startsWith('reply:'))).toHaveLength(1);
+  });
+
+  it('recognizes a group sender by the phone they verified at signup', async () => {
+    const { db, u } = await setup();
+    await db.update(user).set({ phoneNumber: '+15125550101', phoneNumberVerified: true }).where(eq(user.id, u.Mark!));
+    const muse = fakeMuse({ chat: [{ content: 'Hi Mark!' }] });
+    const r = await handleInbound({ db, muse }, { sendingLine: '+15125550000', message: {
+      provider: 'linq', eventId: 'v1', messageId: 'v1', conversationExternalId: 'chat1', conversationKind: 'group', senderHandle: '+15125550101',
+      senderKind: 'phone', text: 'hey', occurredAt: '2026-10-30T18:00:00.000Z', replyToMessageId: null,
+    } });
+    expect(r).toEqual({ status: 'ok', replied: true });
+    const [ident] = await db.select().from(messagingIdentities).where(eq(messagingIdentities.handle, '+15125550101'));
+    expect(ident).toMatchObject({ userId: u.Mark, provider: 'linq' });
+  });
+
+  it('still answers when a reply hits its per-run limit, instead of going silent', async () => {
+    const { db, u } = await setup();
+    await db.insert(messagingIdentities).values({ userId: u.Mark!, provider: 'linq', handle: '+15125550101', kind: 'phone', verifiedAt: new Date() });
+    process.env.MUSE_RUN_DEADLINE_MS = '0';
+    try {
+      const r = await handleInbound({ db, muse: fakeMuse({ chat: [] }) }, { sendingLine: '+15125550000', message: {
+        provider: 'linq', eventId: 'l1', messageId: 'l1', conversationExternalId: 'chat1', conversationKind: 'group', senderHandle: '+15125550101',
+        senderKind: 'phone', text: 'find every comedy show in texas this year', occurredAt: '2026-10-30T18:00:00.000Z', replyToMessageId: null,
+      } });
+      expect(r).toMatchObject({ status: 'limit', replied: true });
+      expect((await db.select().from(outbox)).some((o) => o.effectKey.startsWith('agent-limit:') && o.body?.includes('narrow it down'))).toBe(true);
+    } finally { delete process.env.MUSE_RUN_DEADLINE_MS; }
   });
 
   it('ignores senders without a verified identity', async () => {

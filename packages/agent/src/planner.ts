@@ -166,7 +166,7 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
     let researchSources: (ResearchPageEvidence | ResearchSearchEvidence)[] = [];
     if (deps.research && (found.length < 3 || (intent.kind === 'movie' && found.some(candidate => !candidate.startAt)) || (intent.scheduledEvent && found.filter(candidate => !!candidate.startAt).length < 3))) {
       try {
-        const researched = await runResearch({ muse, research: deps.research, recorder: rec, maxSteps: 40,
+        const researched = await runResearch({ muse, research: deps.research, recorder: rec, maxSteps: 6,
           redactions: researchRedactions,
           question: `Find up to three distinct source-confirmed ${intent.kind === 'movie' ? `movie screenings for ${movieTitles.join(', ')}` : 'dated activities'} matching this public activity query: ${intent.searchQuery}. City: ${city.label} (${city.timeZone}). Date window: ${window.startAt} through ${window.endAt}. Prior candidates: ${found.map(c => c.title).join('; ') || 'none'}. Seek source-confirmed date, start time, title, venue, and public price where available; return alternatives.` });
         researchSources = researched.evidence;
@@ -345,7 +345,15 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
     return { status: 'published' as const, versionId: published.version.id, options: published.options };
   } catch (e) {
     if (e instanceof AppError && e.code === 'STALE_PLAN') { await rec.finish('stale'); return { status: 'stale' as const }; }
-    if (e instanceof LimitError) { await rec.finish('limit', e.message); return { status: 'limit' as const }; }
+    if (e instanceof LimitError) {
+      await rec.finish('limit', e.message);
+      // Never leave the group waiting on a plan that stopped: ask for something narrower.
+      try {
+        await setStatus(db, plan.id, plan.inputRevision, 'clarifying');
+        await notifyPlan(db, plan.id, `rev${plan.inputRevision}:limit`, 'I spent my search budget for this round without enough confirmed options. Can you narrow it down (a specific day, time, area or venue)?');
+      } catch (inner) { if (!(inner instanceof AppError && inner.code === 'STALE_PLAN')) throw inner; }
+      return { status: 'limit' as const };
+    }
     await rec.finish('error', e instanceof Error ? e.message : String(e));
     throw e;
   }
