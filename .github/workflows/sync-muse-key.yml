@@ -1,0 +1,80 @@
+name: Sync production Muse key
+
+# Manual and CI-free: compares the current and candidate keys from inside the running worker,
+# installs only MODEL_API_KEY (the installer keeps a timestamped .env.production backup),
+# recreates the current release's containers without rebuilding, then re-probes.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: sidequest-vultr-production
+      cancel-in-progress: false
+    env:
+      DEPLOY_HOST: ${{ secrets.VULTR_HOST }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.VULTR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.VULTR_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          echo "SSH_CMD=ssh -i $RUNNER_TEMP/key -o BatchMode=yes -o StrictHostKeyChecking=yes root@$DEPLOY_HOST" >> "$GITHUB_ENV"
+      - name: Compare current and candidate keys from the worker
+        env:
+          CANDIDATE: ${{ secrets.SIDEQUEST_MODEL_API_KEY }}
+        run: |
+          # The candidate key travels on stdin, never on a command line.
+          printf '%s' "$CANDIDATE" | $SSH_CMD "docker exec -i sidequest-worker-1 node --input-type=module -e '
+            import { createHash } from \"node:crypto\";
+            let candidate = \"\"; for await (const c of process.stdin) candidate += c;
+            const model = process.env.MUSE_MODEL ?? \"muse-spark-1.3\";
+            for (const [name, key] of [[\"current\", process.env.MODEL_API_KEY ?? \"\"], [\"candidate\", candidate]]) {
+              const fp = createHash(\"sha256\").update(key).digest(\"hex\").slice(0, 12);
+              const headers = { Authorization: \"Bearer \" + key, \"Content-Type\": \"application/json\" };
+              const cat = await (await fetch(\"https://api.meta.ai/v1/models\", { headers })).json();
+              const codes = [];
+              for (let i = 0; i < 4; i++) {
+                const r = await fetch(\"https://api.meta.ai/v1/chat/completions\", { method: \"POST\", headers, body: JSON.stringify({ model, messages: [{ role: \"user\", content: \"Reply OK.\" }] }) });
+                codes.push(r.status);
+              }
+              console.log(JSON.stringify({ key: name, fingerprint: fp, catalog: cat.data?.map(m => m.id) ?? cat.error, completions: codes }));
+            }'"
+      - name: Install only MODEL_API_KEY and recreate containers
+        env:
+          CANDIDATE: ${{ secrets.SIDEQUEST_MODEL_API_KEY }}
+        run: |
+          scp -i "$RUNNER_TEMP/key" -o BatchMode=yes -o StrictHostKeyChecking=yes scripts/install-runtime-env.py "root@$DEPLOY_HOST:/opt/sidequest/install-runtime-env.py"
+          CANDIDATE="$CANDIDATE" python3 -c 'import json, os, sys; json.dump({"MODEL_API_KEY": os.environ["CANDIDATE"]}, sys.stdout)' \
+            | $SSH_CMD 'python3 /opt/sidequest/install-runtime-env.py /opt/sidequest/.env.production'
+          $SSH_CMD 'set -euo pipefail
+            exec 9>/opt/sidequest/.deploy.lock; flock -w 600 9
+            dir=$(readlink -f /opt/sidequest/current)
+            export APP_ENV_FILE=/opt/sidequest/.env.production DEPLOY_RELEASE=$(cat /opt/sidequest/deployed-revision) COMPOSE_PROFILES=live
+            docker compose --project-name sidequest --env-file "$APP_ENV_FILE" --project-directory "$dir" -f "$dir/compose.yaml" up -d --no-build --force-recreate --wait --wait-timeout 180 web worker
+            docker inspect --format "{{.Name}} {{.State.Status}} since {{.State.StartedAt}}" sidequest-web-1 sidequest-worker-1'
+      - name: Probe the recreated worker
+        run: |
+          sleep 10
+          $SSH_CMD "docker exec sidequest-worker-1 node --input-type=module -e '
+            const key = process.env.MODEL_API_KEY ?? \"\"; const model = process.env.MUSE_MODEL ?? \"muse-spark-1.3\";
+            const headers = { Authorization: \"Bearer \" + key, \"Content-Type\": \"application/json\" };
+            const cat = await (await fetch(\"https://api.meta.ai/v1/models\", { headers })).json();
+            const codes = [];
+            for (let i = 0; i < 6; i++) codes.push((await fetch(\"https://api.meta.ai/v1/chat/completions\", { method: \"POST\", headers, body: JSON.stringify({ model, messages: [{ role: \"user\", content: \"Reply OK.\" }] }) })).status);
+            console.log(JSON.stringify({ probe: \"after-install\", catalog: cat.data?.map(m => m.id) ?? cat.error, completions: codes }));'"
+          $SSH_CMD 'docker logs --since 2m sidequest-worker-1 2>&1 | tail -20'
+          curl --fail --silent --show-error https://getsidequest.tech/health/ready
+      - name: Remove SSH key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/key"
