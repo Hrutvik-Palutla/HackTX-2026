@@ -50,7 +50,7 @@ pnpm test:e2e
 
 `DEMO_SEED=1 node --env-file=.env --env-file-if-exists=.env.local --import=tsx packages/agent/src/standout-demo.ts --verify-live` creates three clearly labeled synthetic accounts with no phone numbers, then exercises Common Ground → live SerpApi/Muse options → unanimous votes → quest → shared completion. It writes test plans to the configured database and consumes a small number of real provider calls. It sends no external messages or calendar events and makes no purchase. Do not treat this harness as a real phone-login test.
 
-[Standout proposal snapshot](docs/SIDEQUEST_STANDOUT_PLAN.md) · [Technical contracts](CONTRACTS.md) · [Current status](STATUS.md) · [Deployment](docs/DEPLOYMENT.md)
+[Standout implementation checklist](docs/STANDOUT_IMPLEMENTATION.md) · [Technical contracts](CONTRACTS.md) · [Current status](STATUS.md) · [Deployment](docs/DEPLOYMENT.md)
 
 ---
 
