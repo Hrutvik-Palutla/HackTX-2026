@@ -1,2 +1,5 @@
-import { ExampleWorkspace } from '@/components/example-workspace';
-export default function TryPage() { return <ExampleWorkspace />; }
+import { redirect } from "next/navigation";
+
+export default function TryPage() {
+  redirect("/");
+}

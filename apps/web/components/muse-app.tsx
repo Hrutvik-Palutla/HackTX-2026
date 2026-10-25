@@ -11,7 +11,6 @@ import type { Profile, FriendRequest } from "@muse/accounts";
 import { AppShell, PageHeading } from "./app-shell";
 import { PlanNavigation } from "./plan-navigation";
 import { Feedback } from "./feedback";
-import { PreviewApp } from "./preview-app";
 import { PlanChatPanel } from './plan-chat-panel';
 import { DropNotebook, CommonGroundPicker, QuestPanel, RecipeEditor, type Ground } from "./standout-panel";
 import { api, accountApi, ApiError } from "@/lib/api";
@@ -67,7 +66,6 @@ export function MuseApp({
   view?: string;
   id?: string;
 }) {
-  const [preview, setPreview] = useState(false);
   const [status, setStatus] = useState<Status>("loading");
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -130,14 +128,12 @@ export function MuseApp({
   }, []);
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
-    const isPreview = query.get("preview") === "1";
-    setPreview(isPreview);
     if (!["login", "signup"].includes(view))
       setReturnTo(window.location.pathname);
     const next = query.get("next");
     if (next?.startsWith("/") && !next.startsWith("//") && !next.includes("\\"))
       setReturnTo(next);
-    if (!isPreview) void loadSession();
+    void loadSession();
   }, [loadSession]);
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -145,7 +141,6 @@ export function MuseApp({
     return () => clearTimeout(timer);
   }, [cooldown]);
   useEffect(() => {
-    if (preview) return;
     const here = window.location.pathname + window.location.search;
     if (status === "signed-out")
       window.location.replace(`/?next=${encodeURIComponent(view === "signup" ? returnTo : here)}`);
@@ -153,7 +148,7 @@ export function MuseApp({
       window.location.replace(`/signup?next=${encodeURIComponent(here)}`);
     else if (status === "ready" && profile?.onboardingComplete && view === "signup")
       window.location.replace(returnTo);
-  }, [preview, status, profile?.onboardingComplete, view, returnTo]);
+  }, [status, profile?.onboardingComplete, view, returnTo]);
   const applyPlan = useCallback(
     (value: PlanView) => {
       setPlan(value);
@@ -322,7 +317,6 @@ export function MuseApp({
       window.location.href = "/";
     });
   }
-  if (preview) return <PreviewApp view={view} id={id} />;
   const authView = ["login", "signup"].includes(view);
   const onboarding = status === "ready" && !profile?.onboardingComplete;
   const title = onboarding
@@ -347,11 +341,6 @@ export function MuseApp({
   return (
     <AppShell
       view={view}
-      footer={
-        status === "ready" ? (
-          <Link href="/try">Try the example →</Link>
-        ) : undefined
-      }
     >
       {status === "loading" ? (
         <p role="status">Checking your session…</p>
@@ -381,11 +370,8 @@ export function MuseApp({
             <section className="panel empty-state">
               <h2>Accounts are not connected yet</h2>
               <p>
-                Sign-in is unavailable right now. Try the example without a phone number.
+                Sign-in is unavailable right now. Please try again in a moment.
               </p>
-              <Link className="button" href="/try">
-                Try an example
-              </Link>
             </section>
           ) : status === "signed-out" ? (
             <p role="status">Taking you to sign in…</p>

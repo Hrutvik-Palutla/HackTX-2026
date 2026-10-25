@@ -2,11 +2,9 @@ import Link from "next/link";
 export function PlanNavigation({
   id,
   view,
-  preview = false,
 }: {
   id: string;
   view: string;
-  preview?: boolean;
 }) {
   const base = `/plans/${encodeURIComponent(id)}`;
   return (
@@ -18,7 +16,7 @@ export function PlanNavigation({
       ].map(([key, label, path]) => (
         <Link
           key={key}
-          href={preview ? `${path}?preview=1` : path}
+          href={path}
           aria-current={view === key ? "page" : undefined}
         >
           {label}

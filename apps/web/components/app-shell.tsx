@@ -25,39 +25,12 @@ const SECTIONS = [
 
 export function AppShell({
   view,
-  preview = false,
-  footer,
   children,
 }: {
   view: string;
-  preview?: boolean;
-  footer?: ReactNode;
   children: ReactNode;
 }) {
-  const href = (path: string) => (preview ? `${path}?preview=1` : path);
-  const publicPage = ["home", "example", "demo"].includes(view);
   const authPage = ["login", "signup"].includes(view);
-
-  if (publicPage) {
-    return (
-      <div className="app" data-view={view}>
-        <header className="app-header">
-          <Link className="logo" href="/">
-            <SideQuestLogo />
-          </Link>
-          <nav className="app-nav" aria-label="Main navigation">
-            <Link href="/try">Try it</Link>
-            <Link href="/">Sign in</Link>
-          </nav>
-        </header>
-        <main className="app-main">{children}</main>
-        <footer className="app-footer">
-          <span>SideQuest</span>
-          <span>{footer ?? ""}</span>
-        </footer>
-      </div>
-    );
-  }
 
   if (authPage) {
     return (
@@ -73,14 +46,14 @@ export function AppShell({
   return (
     <div className="console" data-view={view}>
       <aside className="console-sidebar">
-        <Link className="logo" href={href("/plans")}>
+        <Link className="logo" href="/plans">
           <SideQuestLogo />
         </Link>
         <nav className="console-nav" aria-label="Main navigation">
           {SECTIONS.map(([key, label]) => (
             <Link
               key={key}
-              href={href(`/${key}`)}
+              href={`/${key}`}
               aria-current={
                 view === key ||
                 (key === "plans" && ["detail", "private", "payment"].includes(view))
@@ -93,14 +66,8 @@ export function AppShell({
             </Link>
           ))}
         </nav>
-        <div className="console-sidebar-foot">{footer}</div>
       </aside>
       <main className="console-main">
-        {preview && (
-          <p className="notice">
-            Preview · Sample data. Changes reset when you leave the page.
-          </p>
-        )}
         {children}
       </main>
     </div>

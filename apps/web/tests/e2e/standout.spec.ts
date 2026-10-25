@@ -18,12 +18,6 @@ test('voice uploads normalize a normal 22050Hz recording into supported mono 160
 const city = { label: 'Austin, Texas, United States', countryCode: 'US', latitude: 30.27, longitude: -97.74, timeZone: 'America/Chicago' };
 const profile = { id: 'own', name: 'Alex', phoneE164: '+15125550100', phoneVerified: true, avatarUrl: null, city, interests: [], calendarConnected: false, onboardingComplete: true };
 const ground = { id: '11111111-1111-4111-8111-111111111111', theme: 'Night-sky photo walk', searchQuery: 'Austin stargazing photography walk', why: [{ id: 'chip1', name: 'Mel', ownerId: 'mel', label: 'Night photography', evidence: 'I love night photography', kind: 'interest', confirmed: true, shared: true }] };
-test('old demo link opens the no-account example', async ({ page }) => {
-  await page.goto('/demo');
-  await expect(page).toHaveURL(/\/try$/);
-  await expect(page.getByRole('heading', {name: 'Friday after 6', exact: true})).toBeVisible();
-  await expect(page.getByText('Example group. Changes stay in this browser.', {exact:false})).toBeVisible();
-});
 async function app(page: Page, overrides: Record<string, (route: Route) => Promise<void>>) {
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;

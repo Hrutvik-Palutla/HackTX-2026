@@ -1088,7 +1088,7 @@ button.secondary:hover { background: var(--brand-soft); }
   align-items: center;
   text-align: center;
 }
-.home-center .brand-wordmark { width: 168px; margin-bottom: 40px; }
+.home-center .brand-wordmark { width: 220px; margin-bottom: 32px; }
 .home-center h1 { margin: 0 0 18px; font-size: clamp(2.4rem, 5vw, 3.4rem); }
 .home-lede { max-width: 380px; margin: 0 0 36px; color: var(--muted); font-size: 0.95rem; line-height: 1.7; }
 .home-form { width: 100%; display: grid; gap: 18px; text-align: left; }
@@ -1101,24 +1101,20 @@ button.secondary:hover { background: var(--brand-soft); }
 .home-secondary { display: flex; justify-content: center; gap: 20px; }
 .home-secondary button { background: none; color: var(--muted); min-height: 32px; padding: 0; font-size: 0.75rem; letter-spacing: 0.02em; text-decoration: underline; text-underline-offset: 4px; }
 .home-secondary button:hover { background: none; color: var(--ink); }
-.home-try { margin-top: 28px; color: var(--ink); font-size: 0.75rem; letter-spacing: 0.16em; text-transform: uppercase; border-bottom: 1px solid var(--gold); padding-bottom: 3px; }
 .home-figure {
   position: absolute;
   width: clamp(220px, 26vw, 380px);
   height: auto;
-  opacity: 0;
-  transition: opacity 900ms ease;
+  opacity: 0.9;
   pointer-events: none;
   user-select: none;
 }
-.home-figure[data-ready] { opacity: 1; }
 .home-figure--nw { top: 4%; left: 3%; }
 .home-figure--ne { top: 4%; right: 3%; }
 .home-figure--sw { bottom: 3%; left: 3%; }
 .home-figure--se { bottom: 3%; right: 3%; }
 @media (max-width: 1100px) {
-  .home-figure { width: clamp(160px, 22vw, 240px); opacity: 0; }
-  .home-figure[data-ready] { opacity: 0.85; }
+  .home-figure { width: clamp(160px, 22vw, 240px); opacity: 0.85; }
 }
 @media (max-width: 760px) {
   /* Phones: two figures frame the field above and below instead of four corners. */

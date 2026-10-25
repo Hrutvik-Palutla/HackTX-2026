@@ -1,25 +1,22 @@
 import { test, expect } from '@playwright/test';
 
-test('home offers a public example before asking for a phone', async ({ page }) => {
+test('home shows the phone sign-in and all four Anatomy illustrations', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Plans with friends, handled.');
-  await page.getByRole('link', { name: 'See an example first', exact: true }).click();
-  await expect(page).toHaveURL(/\/try$/);
-  await expect(page.getByLabel('Phone number')).toHaveCount(0);
-  await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
+  await expect(page.getByLabel('Mobile number')).toBeVisible();
+  await expect(page.getByRole('link', { name: /example/i })).toHaveCount(0);
+  const figures = page.locator('.home-figure');
+  await expect(figures).toHaveCount(4);
+  for (const image of await figures.all()) {
+    await expect.poll(() => image.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
+  }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test('old preview links converge on the same interactive example', async ({ page }) => {
-  for (const path of ['/plans?preview=1', '/friends?preview=1', '/login?preview=1', '/plans/friday?preview=1', '/studio?preview=1']) {
+test('old mock example URLs return to the real home page', async ({ page }) => {
+  for (const path of ['/try', '/demo']) {
     await page.goto(path);
-    await expect(page).toHaveURL(/\/try$/);
-    await expect(page.getByRole('heading', { name: 'Friday after 6', exact: true })).toBeVisible();
+    await expect(page).toHaveURL('/');
+    await expect(page.getByRole('heading', { name: 'Plans with friends, handled.' })).toBeVisible();
   }
-});
-
-test('reduced motion still disables animated feedback on the example', async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' }); await page.goto('/try');
-  const duration = await page.getByRole('button', { name: 'Choose A', exact: true }).evaluate(el => getComputedStyle(el).transitionDuration);
-  expect(duration.split(',').every(value => parseFloat(value) <= 0.01)).toBe(true);
 });

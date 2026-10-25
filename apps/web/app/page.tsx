@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { SideQuestLogo } from "@/components/brand";
 import { HomeSignIn } from "@/components/home-sign-in";
 import { HomeIllustration } from "@/components/home-illustration";
@@ -18,7 +17,6 @@ export default function Home() {
           and gets the group to yes, right in your group chat.
         </p>
         <HomeSignIn />
-        <Link className="home-try" href="/try">See an example first</Link>
       </main>
     </div>
   );
