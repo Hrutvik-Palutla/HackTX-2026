@@ -41,37 +41,24 @@ for (let attempt = 1; attempt <= 5; attempt++) {
   }
 }
 
-// Capture the latest failed conversation request without executing any tools. All
-// handler writes are rolled back, and no prompt text or model answer is logged.
-const { createDb } = await import(pathToFileURL(`${process.cwd()}/packages/db/src/index.ts`));
-const { handleInbound } = await import(pathToFileURL(`${process.cwd()}/packages/agent/src/discuss.ts`));
-const { db, pool } = createDb();
-try {
-  const failed = await pool.query("select payload from jobs where kind='process_inbound' and state='failed' and created_at > now() - interval '2 hours' order by created_at desc limit 1");
-  let captured;
-  const stop = new Error('Diagnostic capture; transaction rolled back.');
-  if (failed.rows[0]) {
-    try {
-      await db.transaction(async tx => {
-        await handleInbound({ db: tx, muse: { model,
-          async chat(input) { captured = input; throw stop; },
-          async structured() { throw stop; },
-        } }, failed.rows[0].payload);
-        throw stop;
-      });
-    } catch (error) { if (error !== stop) throw error; }
+// Exercise the discussion request shape using entirely fictional context. This
+// diagnostic never reads the production database or executes returned tool calls.
+const synthetic = { tools, messages: [
+  { role: 'system', content: templates['local-outing'].systemInstruction + '\nYou are in a group conversation. Use tools to plan. This is a synthetic diagnostic, so do not invent event facts.' },
+  { role: 'user', content: 'Context: ' + JSON.stringify({ now: new Date().toISOString(), conversation: 'group',
+    sender: { userId: 'synthetic-member-a', name: 'Synthetic Member A', city: 'Austin' }, plan: null,
+    chatMembers: { others: [{ name: 'Synthetic Member B', connectedToSender: true }], withoutAccount: 0 },
+    recentPlanHistory: [],
+  }) + '\nRecent messages:\n' + Array.from({ length: 60 }, (_, index) =>
+    `[synthetic-${index}] Synthetic Member ${index % 2 ? 'A' : 'B'}: We are considering a group activity next weekend. We have not picked an activity yet.`).join('\n') + '\nCurrent message: Suggest an activity for our group next weekend.' },
+] };
+for (let attempt = 1; attempt <= 3; attempt++) {
+  try {
+    const result = await muse.chat(synthetic);
+    console.log(JSON.stringify({ probe: 'synthetic-conversation', attempt, ok: true,
+      usage: result.usage, returnedToolCalls: result.message.tool_calls?.length ?? 0 }));
+  } catch (error) {
+    console.log(JSON.stringify({ probe: 'synthetic-conversation', attempt, ok: false,
+      status: error.status, code: error.code, error: error.error }));
   }
-  console.log(JSON.stringify({ probe: 'failed-request-capture', captured: !!captured,
-    messageCount: captured?.messages.length, toolCount: captured?.tools?.length,
-    inputCharacters: captured ? JSON.stringify(captured).length : 0 }));
-  if (captured) for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const result = await muse.chat(captured);
-      console.log(JSON.stringify({ probe: 'failed-request-replay', attempt, ok: true,
-        usage: result.usage, returnedToolCalls: result.message.tool_calls?.length ?? 0 }));
-    } catch (error) {
-      console.log(JSON.stringify({ probe: 'failed-request-replay', attempt, ok: false,
-        status: error.status, code: error.code, error: error.error }));
-    }
-  }
-} finally { await pool.end(); }
+}
