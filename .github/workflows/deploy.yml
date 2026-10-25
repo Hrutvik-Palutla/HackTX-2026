@@ -1,0 +1,101 @@
+name: CI and Vultr deployment
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Tests and production build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: checks-${{ github.ref }}
+      cancel-in-progress: true
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: sidequest-ci-only
+          POSTGRES_DB: sidequest_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sidequest_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:sidequest-ci-only@localhost:5432/sidequest_test
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 10.18.3
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:integration
+      - run: pnpm build
+      - name: Install browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Desktop and mobile browser tests
+        run: pnpm test:e2e --workers=2
+
+  deploy:
+    name: Deploy main to Vultr
+    needs: checks
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: sidequest-vultr-production
+      cancel-in-progress: false
+    env:
+      DEPLOY_HOST: ${{ secrets.VULTR_HOST }}
+      SITE_ADDRESS: ":80"
+      APP_BASE_URL: http://144.202.19.9
+      DEPLOY_RELEASE: ${{ github.sha }}
+      DEPLOY_STRICT_HOST_KEYS: "yes"
+      BOOTSTRAP_SERVER: "0"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Configure deployment SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.VULTR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.VULTR_KNOWN_HOSTS }}
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/sidequest-deploy-key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          echo "DEPLOY_SSH_KEY=$RUNNER_TEMP/sidequest-deploy-key" >> "$GITHUB_ENV"
+      - name: Upload exact revision and deploy
+        run: bash scripts/deploy-vultr.sh
+      - name: Verify public liveness
+        run: curl --fail --silent --show-error --retry 6 --retry-delay 3 "$APP_BASE_URL/health/live"
+      - name: Record deployment
+        run: |
+          {
+            echo '## SideQuest deployed'
+            echo "Revision: \`$DEPLOY_RELEASE\`"
+            echo "Preview: $APP_BASE_URL/plans?preview=1"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary SSH key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sidequest-deploy-key"

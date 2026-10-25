@@ -1,5 +1,5 @@
 {
-  "name": "hacktx-2026",
+  "name": "sidequest",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.34.8",
@@ -7,8 +7,17 @@
     "node": ">=24"
   },
   "scripts": {
+    "dev": "pnpm --filter @muse/web dev",
+    "build": "pnpm --filter @muse/web build",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p apps/worker/tsconfig.json",
     "test": "vitest run",
+    "test:integration": "tsx --test apps/web/tests/*.integration.test.ts",
+    "accounts:schema": "tsx apps/web/scripts/print-auth-schema.ts",
+    "test:e2e": "playwright test",
+    "deploy:vultr": "bash scripts/deploy-vultr.sh",
+    "vultr:status": "node --env-file-if-exists=.env scripts/vultr-status.mjs",
+    "typecheck:web": "pnpm --filter @muse/web typecheck",
+    "test:accounts": "tsx --test packages/accounts/src/*.test.ts",
     "db:generate": "pnpm --filter @hacktx/db generate",
     "db:migrate": "pnpm --filter @hacktx/db migrate",
     "worker": "pnpm --filter @hacktx/worker start",
@@ -17,9 +26,10 @@
     "test:part4": "cd packages/fulfillment && node --test test/*.test.ts ../discovery/test/*.test.ts ../integrations/link-wallet.test.ts ../../apps/booking-worker/*.test.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/node": "24.19.2",
     "tsx": "4.23.15",
-    "typescript": "7.0.2",
+    "typescript": "5.9.3",
     "vitest": "5.0.5"
   }
 }

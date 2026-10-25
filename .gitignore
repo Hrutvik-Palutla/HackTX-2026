@@ -1,6 +1,7 @@
 node_modules/
 .env
 .env.*
+.env*
 !.env.example
 .next/
 dist/
@@ -9,3 +10,6 @@ coverage/
 *.tsbuildinfo
 *.log
 .DS_Store
+playwright-report/
+test-results/
+.vultr-private/
