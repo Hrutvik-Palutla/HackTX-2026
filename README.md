@@ -20,6 +20,7 @@ Text notes, manual availability, web chat, and ICS calendar downloads remain ava
 ## Run locally
 
 Use Node **24.22.1** and pnpm **10.34.8**. Copy the privately supplied `.env.team` to `.env`, or fill the placeholders in `.env.example`. Real keys and the team file are Git-ignored.
+Web dev/start and the worker automatically load the root `.env` and optional `.env.local`; externally supplied environment variables retain precedence.
 
 ```sh
 pnpm install --frozen-lockfile

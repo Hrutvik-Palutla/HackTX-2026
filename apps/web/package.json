@@ -2,9 +2,9 @@
   "name": "@muse/web",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node --env-file-if-exists=../../.env --env-file-if-exists=../../.env.local node_modules/next/dist/bin/next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node --env-file-if-exists=../../.env --env-file-if-exists=../../.env.local node_modules/next/dist/bin/next start",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
