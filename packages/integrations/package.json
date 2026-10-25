@@ -7,7 +7,10 @@
     "./serpapi": "./serpapi.ts",
     "./link-wallet": "./link-wallet.ts",
     "./reimbursements": "./reimbursements.ts",
-    "./messaging/claw": "./messaging/claw-adapter.ts"
+    "./messaging/claw": "./messaging/claw-adapter.ts",
+    "./calendar": "./calendar-http.ts",
+    "./google-calendar": "./google-calendar.ts",
+    "./calendar-jobs": "./calendar-jobs.ts"
   },
   "dependencies": {
     "@hacktx/contracts": "workspace:*",
