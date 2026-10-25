@@ -1,116 +1,42 @@
 # SideQuest
 
-**Make plans. Keep the group chat.**
+Plans that make it out of the group chat.
 
-Ask Sid in your friends’ group chat. SideQuest finds sourced options, checks known availability and collects everyone’s votes. The website is the board for those plans, messages and optional activities. Claw Messenger carries the Messages conversation; Sid is the agent. The backend uses Meta Muse, SerpApi, Tiger Postgres and versioned agent settings.
+SideQuest helps friends turn “we should hang out” into real plans. Find something everyone likes, work out a time, and choose an outing together—all through chat, with a website to keep everything organized.
 
-Production: **https://getsidequest.tech**. This branch, **`design/chat-first-preview`**, is a draft based on `eae4bac`; it has **not been deployed**. Its public `/try` is an interactive browser-only example with fictional friends, no account and no API calls. `/demo` and old `?preview=1` links lead there. The older recorded provider outputs remain an internal test fixture at `/api/demo`, rather than a second user journey. Real private groups still require verified identity.
+## What you can do
 
-The proposed visual theme exists **only as [an image](docs/design/sidequest-concept-v1.png)**, pending approval. This branch changes wording, entry flow and chat behavior while retaining the existing theme. See the [walkthrough, decisions and sponsor review](docs/design/CHAT_FIRST_REVIEW.md) and [image prompt/provenance](docs/design/CONCEPT_PROMPT.md).
+- Plan through chat: Ask SideQuest for ideas in iMessage through Claw Messenger or use the website’s chat.
+- Find common interests: Add notes, links, photos, or voice recordings. Review suggested interests and choose what friends can see.
+- Discover real outings: Get suggestions backed by source links, with available timing and price details.
+- Coordinate availability: Connect Google Calendar or enter availability manually. Keep personal constraints and spending limits private.
+- Vote together: Compare options, mark favorites, and revise the plan when something changes.
+- Keep the details handy: Review the chosen outing, add it to your calendar, or download an ICS file.
+- Make it an adventure: Generate optional photo challenges, riddles, and an illustrated quest card, then track shared progress.
+- Catch up on chat: Request an optional Snowflake Cortex recap of selected group messages, with supporting quotes.
+- Inspect the AI: Team members can edit versioned agent settings and review runs, tool calls, and usage in Studio.
 
-Before running this branch against a real database, apply its additive migration `0001_simple_shooting_star.sql` with `pnpm db:migrate` using the same verified-TLS configuration. It adds nullable message-level plan scope and an index; it intentionally does not publish historical chat. **This migration has not been applied to production.** The readiness endpoint checks that the new column exists.
+Booking and payment support depends on the configured provider. Unsupported checkouts hand off to the buyer, with cost splitting and repayment tracking available around the purchase flow.
 
-## Standout flow
+## Try the demo
 
-1. Add a note or link in **Your interests**. Optional photo descriptions (Spark) and WAV voice transcription (Muse Voice) fill a private draft for review.
-2. Confirm the suggested interests and explicitly choose which quotes can be used by connected friends in group plans. Nothing is shared by default.
-3. Select connected friends and click **Find ideas**. The suggestions cite confirmed shared interests from at least two people. Revoked or changed evidence cannot be reused.
-4. Create the plan. SerpApi searches the grounded theme, options retain source links and honest unknowns, and the worker refreshes connected calendars. Each current member must approve the same option and version.
-5. After choosing an outing, open **Photo challenges and riddles** if the group wants activities. Shared progress records who completed each one; a changed selection needs new activities. Muse Image can add an illustration.
-6. In **/studio**, authorized teammates edit instructions, allowed tools, and limits. Saving creates a new recipe version; subsequent runs load it, and traces retain their actual version, model calls, timing, tokens, and available cost estimates.
+Open /try to explore a fictional group adventure without an account. Compare options on an illustrative map, vote, refine your plan, complete challenges, explore badges, and create downloadable photo share cards.
 
-Text notes, manual availability, web chat, and ICS calendar downloads remain available without optional media or Google consent. Calendar event creation does not reserve a venue. Booking/payment integrations keep their explicit handoff and configuration boundaries.
+The demo runs entirely in your browser. Reservations are simulated, photos stay on your device, and its badges and sharing flow are not yet connected to live plans.
+
+## Built with
+
+Next.js, TypeScript, Meta Muse, SerpApi, Tiger Postgres, Claw Messenger, Google Calendar, and Vultr. Optional conversation recaps use Snowflake Cortex; live verification is still pending network configuration.
 
 ## Run locally
 
-### Optional conversation recap (Snowflake)
+Use Node 24.22.1 and pnpm 10.34.8. Copy .env.example to .env and configure the required services.
 
-The shared frontend branch, `design/chat-first-preview`, includes **Catch up on the conversation** inside plan chat. Select group messages, confirm sending their text to Snowflake Cortex, and get ideas, concerns and questions with quote links. A recap does not approve or change a plan and is not retained as group memory. Private threads are excluded server-side.
-
-Configure server-only `SNOWFLAKE_ACCOUNT_URL`, `SNOWFLAKE_PAT`, and optionally `SNOWFLAKE_CORTEX_MODEL` in ignored `.env.local`. The integration uses the [official Cortex Chat Completions API](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api), not a second application database. Use a role restricted to Cortex access, not ACCOUNTADMIN. Snowflake's [PAT setup](https://docs.snowflake.com/en/user-guide/programmatic-access-tokens) documents role/network restrictions. No credentials are included in this branch.
-
-Run `node --env-file-if-exists=.env.local --import=tsx scripts/snowflake-smoke.ts` for one live synthetic inference with no app database, text delivery, calendar write or purchase. It reports actual provider usage, never token values. Local mocked checks do not establish live Snowflake access or prize eligibility. See `STATUS.md` for the verified state.
-
-Use Node **24.22.1** and pnpm **10.34.8**. Copy the privately supplied `.env.team` to `.env`, or fill the placeholders in `.env.example`. Real keys and the team file are Git-ignored.
-Web dev/start and the worker automatically load the root `.env` and optional `.env.local`; externally supplied environment variables retain precedence. Local workers do not open the production Claw listener. The hosted worker is the sole production listener. For a real local iMessage run, `live-agent.ts` requires a separate Claw account, `CLAW_DEV_MESSENGER_API_KEY`, `CLAW_DEV_MESSENGER_FROM_PHONE`, and `LIVE_AGENT_ALLOW_CLAW_LISTENER=true`; another API key in the production Claw account is not isolated.
-
-```sh
 pnpm install --frozen-lockfile
 pnpm dev
-# Separate terminal, same environment. Claw listening stays disabled locally by default:
+
+Start the background worker in another terminal:
+
 pnpm worker
-```
 
-The web app is at `http://localhost:3000`; match `APP_BASE_URL`, `BETTER_AUTH_URL`, and your Google OAuth redirect URI to that origin. Production uses **https://getsidequest.tech**. Register `https://getsidequest.tech/api/calendar/callback` in the Google OAuth web client before using Calendar there. Only the user grants Calendar consent; event titles never enter planning prompts.
-
-`TEAM_ADMIN_PHONES` is a comma-separated list of approved E.164 numbers. Studio access is granted only after Better Auth verifies ownership of that phone. `TEAM_ADMIN_USER_IDS` also supports an explicit user-ID allowlist.
-
-The shared Tiger service uses `sslmode=verify-full`. Its baseline is already initialized; never point the new baseline at the old service with the superseded schema. The worker uses the same encryption key and database as the web process.
-
-The workflow reliability update requires the incremental migration [0001_workflow_reliability.sql](packages/db/drizzle/0001_workflow_reliability.sql) before starting the updated web/worker against an existing database. It adds encrypted pending group requests, stored public research evidence, conversation-scoped jobs and worker heartbeats. Do not reapply the baseline. Local fixture tests apply both migrations to an isolated PGlite database automatically.
-
-The worker has two processing lanes and a separate delivery lane. Jobs in the same conversation or plan stay ordered. Production readiness requires fresh processing and connected delivery heartbeats for the deployed revision; local web-only development does not require them unless `REQUIRE_WORKER_READY=true`.
-
-## Checks and demo data
-
-```sh
-pnpm typecheck
-pnpm typecheck:web
-pnpm test
-pnpm test:part3
-pnpm test:accounts
-pnpm test:part4
-pnpm build
-pnpm test:e2e
-```
-
-`DEMO_SEED=1 node --env-file=.env --env-file-if-exists=.env.local --import=tsx packages/agent/src/standout-demo.ts --verify-live` creates three clearly labeled synthetic accounts with no phone numbers, then exercises Common Ground → live SerpApi/Muse options → unanimous votes → quest → shared completion. It writes test plans to the configured database and consumes a small number of real provider calls. It sends no external messages or calendar events and makes no purchase. Do not treat this harness as a real phone-login test.
-
-[Standout implementation checklist](docs/STANDOUT_IMPLEMENTATION.md) · [Technical contracts](CONTRACTS.md) · [Current status](STATUS.md) · [Deployment](docs/DEPLOYMENT.md)
-
----
-
-## Original app and account implementation notes
-
-Part 1 of the HackTX implementation plan. Includes phone sign-in, account onboarding/settings, friend invitations, and web views for plans, voting, private notes, payments and team Studio. The UI keeps the compact SideQuest design.
-
-```sh
-pnpm install
-pnpm dev
-```
-
-Open http://localhost:3000/try to use the public example. Private pages require a verified session and a completed profile. Old preview links redirect to `/try`; the example never authenticates as another person.
-
-## What works in this part
-
-- Better Auth six-digit phone OTP, sessions, resend and attempt limits, signup and sign-out.
-- PostgreSQL-backed own profiles, canonical Austin city/time zone, private interests, onboarding state.
-- Encrypted invitation recipients, hashed invitation tokens, expiration, recipient-bound accept/decline, canonical friendship creation, request lists and invitation rate limits.
-- Session-aware UI with loading/error/empty states, plan creation/comparison, acceptable votes and favorite, stale-plan handling, group/private messages, own-share view, buyer ledger, Calendar links, and team Studio views.
-
-## External handoffs
-
-Part 2 owns the shared database schema/migrations and plan/Studio APIs. Part 3 supplies private OTP delivery and Calendar handlers. Part 4 supplies quote, payment, wallet, booking and reimbursement APIs. This part calls those APIs and never substitutes fake live results when they are unavailable.
-
-Accounts automatically initialize when `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `APP_ENCRYPTION_KEY` (32 bytes, base64), and `PHONE_LOOKUP_HMAC_KEY` (at least 32 characters) are set. Part 2 must apply the generated auth schema and the [account table requirements](docs/APP_ACCOUNTS_HANDOFF.md). Part 3 registers its private OTP sender through `configurePrivateOtpSender`. Credentials and migrations are not provisioned by this part.
-
-## Validation
-
-```sh
-pnpm typecheck
-pnpm test
-pnpm build
-pnpm exec playwright install chromium
-pnpm test:e2e
-TEST_DATABASE_URL=postgresql://.../isolated_test_db pnpm test:integration
-```
-
-The browser suite covers account, voting, privacy, agent settings, interests, chat and the public example on desktop and mobile. Private journeys use controlled API responses; these are UI checks, not proof of live provider delivery. Playwright starts the built app automatically when no local server is running.
-
-The integration test creates a randomly named schema, applies the shared application migrations there (including auth and plan tables), and removes that schema afterward. Foreign-key qualifications are remapped to that disposable schema. It exercises real Better Auth sessions and real PostgreSQL persistence without contacting a messaging provider. It is skipped unless `TEST_DATABASE_URL` is set. Never point test commands at a production database.
-
-[Integration handoff and remaining dependencies](docs/APP_ACCOUNTS_HANDOFF.md).
-
-[Vultr deployment instructions](docs/DEPLOYMENT.md) cover Docker Compose, Caddy, SSH access, environment setup, and the distinction between the public preview and integrated live accounts.
-
-[CI/CD](docs/CICD.md): pull requests run checks; successful pushes to `main` automatically deploy to the existing Vultr instance with health checks and rollback.
+Open http://localhost:3000. The public demo needs no sign-in; private plans require a verified account. See README setup references (docs/DEPLOYMENT.md) for deployment configuration and STATUS.md (STATUS.md) for implementation and verification details.
