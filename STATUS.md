@@ -2,6 +2,18 @@
 
 Each owner keeps their own section current: status, files, what actually works + the check run, blockers, next action.
 
+## Tiger standard conversion — local development unblocked; certificate verification pending (October 24, 2026)
+
+- With the owner's explicit approval, converted `sidequest` (`b30joco0l9`) from free to standard. Console shows Ready, 0.5 CPU / 2 GiB RAM, normal compute estimate $0.04/hour / $31/month, covered by the current Performance trial (about 28 days and $1,000 credits remaining). Conversion cannot be reversed to free.
+- Billing shows no payment method registered. Checked Billing Details/Emails/Timeline, project settings, account settings, and Notifications; found no configurable warning before trial expiry or charges. No reminder setting was enabled, and no payment method was added.
+- Support case **00045362** was submitted and verified Open. It requests an authoritative CA bundle or supported verified-TLS solution; no credentials were included.
+- Full certificate verification (`sslmode=verify-full`) still fails with `SELF_SIGNED_CERT_IN_CHAIN`. After MLH suggested the workaround and the owner approved it, changed only the Git-ignored local `.env` DATABASE_URL flags to `uselibpqcompat=true&sslmode=require`. This retains TLS encryption but disables server certificate verification in the installed pg driver; it is temporary development configuration, not a certificate fix. Source code and deployment configuration were not changed.
+- Live read-only queries now succeed: TLS active, 40 public base tables, 3 migration records, all hashes and journal timestamps matching migrations 0000–0002. `npx --yes pnpm@10.34.8 db:migrate` completed successfully against Tiger; the migration history was already current.
+- Next: remove `uselibpqcompat` and set `sslmode=verify-full` once Tiger's signed certificate passes verification. Case 00045362 remains the escalation path. Real worker processing and the merged/deployed full-app journey still need separate validation; local env changes do not propagate to other teammates or the server.
+- Local proof: `../research/setup/tiger-converted-standard.png` and `../research/setup/tiger-support-submitted.png`. Credentials were not printed or committed.
+- Follow-up (Part 2): independently re-verified the schema and ledger above against live Tiger. `pnpm db:migrate` previously needed exported env vars; `drizzle.config.ts` now loads the root `.env`, and a re-run reports nothing to apply. The worker booted against Tiger and polled the queue without errors (empty queue; no job processed yet). The public certificate was re-checked every minute for 40 minutes after conversion and was still the private `ca.timescale.com` chain.
+- **Help wanted:** get Tiger to serve a publicly signed certificate (or an authoritative CA bundle) so `sslmode=verify-full` works; then the deploy can drop the workaround.
+
 ## Tiger migrations 0001 + 0002 — applied (October 24, 2026)
 
 - Applied `0001_drop_unused_fulfillment_text_source_ids.sql` and `0002_part4_fulfillment_tables.sql` from the local `integration/part2-part4` checkout through Tiger's web SQL editor. The fetched `origin/main` does not yet contain the database package.
