@@ -2,6 +2,15 @@
 
 Each owner keeps their own section current: status, files, what actually works + the check run, blockers, next action.
 
+## Snowflake conversation recap — ready for review (October 25)
+
+- **Owner:** Snowflake integration agent; merged `feature/snowflake-recap` (`2d13c34`) into the shared frontend branch `design/chat-first-preview` on top of `32170f7`, at the owner's request. Latest homepage changes are preserved; the separate local design-handoff prompt is excluded. Continue frontend work on `design/chat-first-preview`.
+- **Files:** Cortex client/recap service and export, guarded `/chat/recap` route, existing chat-panel integration and four scoped CSS rules, usage/cost labeling, env placeholders, smoke script, API/browser tests, README and contracts.
+- **Working under controlled checks:** explicit message selection and consent; member-only scoped group text; private/foreign/unscoped history excluded; quote/ID validation; bounded requests; revision recheck; redacted real-run metadata; no changes to votes/plans or outgoing messages. Recaps remain ephemeral. Tiger remains the operational store.
+- **Checks:** 118 backend tests, root/web TypeScript and production build passed. Full production-build browser run passed 42 checks on desktop/mobile, including the recap flow and two design-capture checks; those unrelated capture checks were then removed from the Snowflake-only patch. No dependencies or migrations added.
+- **Merge checks:** no conflicts with the latest frontend design; root, worker and web TypeScript checks and all five Snowflake API tests pass. The new production build stops in the existing Google font loader (`next/font`, URL-extension parsing), so the desktop/mobile browser checks were not repeated on this merged revision. No font, dependency or other design changes were added to resolve that separate build issue.
+- **Live setup / next action:** with the owner's action-time approval, generated a PUBLIC-role PAT in the signed-in Snowflake browser session, expiring October 26, and saved it only in ignored local configuration. Snowflake reports a missing network policy; the owner chose to keep that restriction, so the proposed temporary exception was canceled. No live Cortex request was made or verified. A future live check needs a configured account URL and an approved network policy before running `scripts/snowflake-smoke.ts`, followed by a consenting-group check. No production deployment, real user-message export, calendar write or purchase occurred.
+
 ## Group-chat recovery fixes — October 25
 
 - On top of `eae4bac`: source-backed movie page extraction with bounded requests, honest unknown-time theater choices, private decline notifications, organizer-only remove/close tools, and buyer-confirmed unpurchased handoff cancellation before replanning. Unknown-time choices cannot become bookings or calendar events.
