@@ -154,7 +154,24 @@ importers:
         specifier: ~5.9.3
         version: 5.9.3
 
-  packages/integrations: {}
+  packages/integrations:
+    dependencies:
+      '@hacktx/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@hacktx/core':
+        specifier: workspace:*
+        version: link:../core
+      '@hacktx/db':
+        specifier: workspace:*
+        version: link:../db
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@electric-sql/pglite@0.5.11)(@types/pg@8.23.1)(pg@8.23.1)
+    devDependencies:
+      '@electric-sql/pglite':
+        specifier: 0.5.11
+        version: 0.5.11
 
   packages/templates:
     dependencies:
