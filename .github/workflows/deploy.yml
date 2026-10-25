@@ -98,6 +98,10 @@ jobs:
           test -n "$SIDEQUEST_MODEL_API_KEY"
           scp -i "$DEPLOY_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes scripts/install-runtime-env.py "root@$DEPLOY_HOST:/opt/sidequest/install-runtime-env.py"
           printf '%s' "$RUNTIME_ENV_B64" | base64 --decode | SIDEQUEST_MODEL_API_KEY="$SIDEQUEST_MODEL_API_KEY" python3 -c 'import json, os, sys; settings=json.load(sys.stdin); settings["MODEL_API_KEY"]=os.environ["SIDEQUEST_MODEL_API_KEY"]; json.dump(settings, sys.stdout)' | ssh -i "$DEPLOY_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes "root@$DEPLOY_HOST" 'sudo -n python3 /opt/sidequest/install-runtime-env.py /opt/sidequest/.env.production'
+          expected_key_hash=$(printf '%s' "$SIDEQUEST_MODEL_API_KEY" | sha256sum | cut -d' ' -f1)
+          remote_key_hash=$(ssh -i "$DEPLOY_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes "root@$DEPLOY_HOST" "sudo -n python3 -c 'import hashlib, pathlib; p=pathlib.Path(\"/opt/sidequest/.env.production\"); line=next(v for v in p.read_text().splitlines() if v.startswith(\"MODEL_API_KEY=\")); key=line.split(\"=\",1)[1].strip().strip(chr(34)+chr(39)); print(hashlib.sha256(key.encode()).hexdigest())'")
+          test "$expected_key_hash" = "$remote_key_hash"
+          echo 'Production Muse key fingerprint matches the deployment secret.'
       - name: Upload exact revision and deploy
         run: bash scripts/deploy-vultr.sh
       - name: Verify public liveness
