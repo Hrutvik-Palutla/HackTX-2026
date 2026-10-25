@@ -40,3 +40,38 @@ for (let attempt = 1; attempt <= 5; attempt++) {
       error: error.error, requestId: error.request_id }));
   }
 }
+
+// Capture the latest failed conversation request without executing any tools. All
+// handler writes are rolled back, and no prompt text or model answer is logged.
+const { createDb } = await import(pathToFileURL(`${process.cwd()}/packages/db/src/index.ts`));
+const { handleInbound } = await import(pathToFileURL(`${process.cwd()}/packages/agent/src/discuss.ts`));
+const { db, pool } = createDb();
+try {
+  const failed = await pool.query("select payload from jobs where kind='process_inbound' and state='failed' and created_at > now() - interval '2 hours' order by created_at desc limit 1");
+  let captured;
+  const stop = new Error('Diagnostic capture; transaction rolled back.');
+  if (failed.rows[0]) {
+    try {
+      await db.transaction(async tx => {
+        await handleInbound({ db: tx, muse: { model,
+          async chat(input) { captured = input; throw stop; },
+          async structured() { throw stop; },
+        } }, failed.rows[0].payload);
+        throw stop;
+      });
+    } catch (error) { if (error !== stop) throw error; }
+  }
+  console.log(JSON.stringify({ probe: 'failed-request-capture', captured: !!captured,
+    messageCount: captured?.messages.length, toolCount: captured?.tools?.length,
+    inputCharacters: captured ? JSON.stringify(captured).length : 0 }));
+  if (captured) for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const result = await muse.chat(captured);
+      console.log(JSON.stringify({ probe: 'failed-request-replay', attempt, ok: true,
+        usage: result.usage, returnedToolCalls: result.message.tool_calls?.length ?? 0 }));
+    } catch (error) {
+      console.log(JSON.stringify({ probe: 'failed-request-replay', attempt, ok: false,
+        status: error.status, code: error.code, error: error.error }));
+    }
+  }
+} finally { await pool.end(); }
