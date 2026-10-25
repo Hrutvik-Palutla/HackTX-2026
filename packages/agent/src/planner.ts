@@ -1,7 +1,7 @@
 // plan / repair job: request -> sourced candidates -> code feasibility -> Muse picks & explains -> code validates
 // -> CAS publish -> recipient-scoped messages. The model never decides availability, price, or which venues exist.
 import { z } from 'zod';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { candidates, conversations, plans, planParticipants, planConversations, sources, user, type Db } from '@hacktx/db';
 import type { CalendarPort, Candidate, City, DiscoveryPort, Interval, PlanOption, ResearchPort, ResearchPageEvidence, ResearchSearchEvidence, Source } from '@hacktx/contracts';
 import {
@@ -76,8 +76,11 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
 
     // 1. Interpret the request (public request text only).
     rec.charge('turn');
-    const participantProfiles = await db.select({ interests: user.interests }).from(planParticipants)
+    const participantProfiles = await db.select({ name: user.name, interests: user.interests }).from(planParticipants)
       .innerJoin(user, eq(user.id, planParticipants.userId)).where(eq(planParticipants.planId, plan.id));
+    const pendingNames = (await db.select({ name: planParticipants.requestedName }).from(planParticipants)
+      .where(and(eq(planParticipants.planId, plan.id), isNull(planParticipants.userId)))).map(p => p.name).filter((name): name is string => !!name);
+    const researchRedactions = [...participantProfiles.map(profile => profile.name), ...pendingNames];
     const interestCounts = new Map<string, number>();
     for (const profile of participantProfiles) for (const interest of new Set((profile.interests ?? []).map((s) => s.trim()).filter(Boolean))) {
       const key = interest.toLocaleLowerCase(); interestCounts.set(key, (interestCounts.get(key) ?? 0) + 1);
@@ -164,7 +167,8 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
     if (deps.research && (found.length < 3 || (intent.kind === 'movie' && found.some(candidate => !candidate.startAt)) || (intent.scheduledEvent && found.filter(candidate => !!candidate.startAt).length < 3))) {
       try {
         const researched = await runResearch({ muse, research: deps.research, recorder: rec, maxSteps: 40,
-          question: `Find up to three distinct source-confirmed ${intent.kind === 'movie' ? `movie screenings for ${movieTitles.join(', ') || plan.request}` : 'dated events'} for this request: ${plan.request}. City: ${city.label} (${city.timeZone}). Date window: ${window.startAt} through ${window.endAt}. Prior candidates: ${found.map(c => c.title).join('; ') || 'none'}. Seek source-confirmed date, start time, title, venue, and price where available; return alternatives.` });
+          redactions: researchRedactions,
+          question: `Find up to three distinct source-confirmed ${intent.kind === 'movie' ? `movie screenings for ${movieTitles.join(', ')}` : 'dated activities'} matching this public activity query: ${intent.searchQuery}. City: ${city.label} (${city.timeZone}). Date window: ${window.startAt} through ${window.endAt}. Prior candidates: ${found.map(c => c.title).join('; ') || 'none'}. Seek source-confirmed date, start time, title, venue, and public price where available; return alternatives.` });
         researchSources = researched.evidence;
         const extracted = await extractResearchCandidates({ muse, sources: researchSources, kind: intent.kind, city, window, movieTitles, recorder: rec });
         const have = new Set(found.map(c => `${c.title.toLocaleLowerCase()}|${c.startAt ?? ''}`));
