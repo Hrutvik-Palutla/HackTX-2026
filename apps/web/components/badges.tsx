@@ -1,6 +1,6 @@
 // The eight shared-adventure badges: one registry for names, rules and art. Art is a raw SVG string
 // so the same drawing renders in the page and on exported share cards.
-export type BadgeId = "first-outing" | "three-outings" | "five-outings" | "variety" | "after-dark" | "outdoors" | "quest-team" | "memory";
+export type BadgeId = "first-outing" | "three-outings" | "five-outings" | "variety" | "after-dark" | "outdoors" | "quest-team" | "memory" | "first-friend" | "circle" | "full-table" | "planner" | "connector" | "agreed";
 export type Badge = { id: BadgeId; name: string; rule: string; goal: number; unit: string };
 
 export const BADGES: Badge[] = [
@@ -11,7 +11,13 @@ export const BADGES: Badge[] = [
   { id: "after-dark", name: "After Hours", rule: "Two outings that started at or after 7 PM local time.", goal: 2, unit: "late outings" },
   { id: "outdoors", name: "Fresh Air", rule: "Two outdoor outings.", goal: 2, unit: "outdoor outings" },
   { id: "quest-team", name: "Team Effort", rule: "All five challenges on one quest, finished by at least two different people.", goal: 5, unit: "challenges" },
-  { id: "memory", name: "Worth Keeping", rule: "The first photo someone chose to share with the group from an outing.", goal: 1, unit: "photo" },
+  { id: "memory", name: "Worth Keeping", rule: "The first photo or voice memo saved from an outing.", goal: 1, unit: "memory" },
+  { id: "first-friend", name: "Plus One", rule: "Connect with your first friend on SideQuest.", goal: 1, unit: "friend" },
+  { id: "circle", name: "Inner Circle", rule: "Five friends connected.", goal: 5, unit: "friends" },
+  { id: "full-table", name: "Full Table", rule: "One plan with four or more people.", goal: 4, unit: "people in a plan" },
+  { id: "planner", name: "The Instigator", rule: "Start three plans.", goal: 3, unit: "plans" },
+  { id: "connector", name: "Bridge Builder", rule: "Make plans with five different people.", goal: 5, unit: "people" },
+  { id: "agreed", name: "It’s a Date", rule: "Get a group to agree on a plan.", goal: 1, unit: "agreed plan" },
 ];
 
 const INK = "#17171a";
@@ -39,6 +45,18 @@ const MOTIF: Record<BadgeId, (a: string, g: string) => string> = {
     `<path d="M22 50c4-6 14-4 18-10s-2-10 4-14" stroke="${a}" stroke-dasharray="2.5 2"/><path d="M26 30c0-7 6-10 10-10 0 6-4 10-10 10z" stroke="${a}"/><path d="M26 30l6-6" stroke="${g}"/><path d="M38 38c0-5 4-7 7-7 0 4-3 7-7 7z" stroke="${g}"/>`,
   "quest-team": (a, g) =>
     `<path d="M22 50V18" stroke="${a}"/><path d="M22 19l15 5-15 5" stroke="${a}"/><path d="M42 50V22" stroke="${g}"/><path d="M42 23l-13 5 13 5" stroke="${g}" fill="#fbfbfa"/>`,
+  "first-friend": (a, g) =>
+    `<circle cx="26" cy="27" r="5" stroke="${a}"/><path d="M17 44a9 9 0 0 1 18 0" stroke="${a}"/><path d="M42 24v10M37 29h10" stroke="${g}"/>`,
+  circle: (a, g) =>
+    Array.from({ length: 5 }, (_, i) => { const t = (i / 5) * Math.PI * 2 - Math.PI / 2; return `<circle cx="${(32 + Math.cos(t) * 13).toFixed(2)}" cy="${(32 + Math.sin(t) * 13).toFixed(2)}" r="3.6" stroke="${i ? a : g}"/>`; }).join("") + `<circle cx="32" cy="32" r="13" stroke="${g}" stroke-dasharray="1.5 3"/>`,
+  "full-table": (a, g) =>
+    `<rect x="24" y="26" width="16" height="12" rx="1.5" stroke="${a}"/>` + [[32, 19], [32, 45], [17, 32], [47, 32]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="3" fill="${g}" stroke="none"/>`).join(""),
+  planner: (a, g) =>
+    `<rect x="20" y="20" width="24" height="24" rx="2" stroke="${a}"/><path d="M20 27h24M26 17v6M38 17v6" stroke="${a}"/><path d="M26 35l4 4 8-9" stroke="${g}"/>`,
+  connector: (a, g) =>
+    `<path d="M16 42c6-14 26-14 32 0" stroke="${a}"/><path d="M16 42h32" stroke="${a}"/><path d="M24 36v6M32 33v9M40 36v6" stroke="${g}"/><circle cx="16" cy="42" r="2" fill="${g}" stroke="none"/><circle cx="48" cy="42" r="2" fill="${g}" stroke="none"/>`,
+  agreed: (a, g) =>
+    `<path d="M22 34l7 7 14-16" stroke="${a}" stroke-width="2.4"/><path d="M45 18l1.5 3 3 1.5-3 1.5-1.5 3-1.5-3-3-1.5 3-1.5z" fill="${g}" stroke="none"/>`,
   memory: (a, g) =>
     `<rect x="19" y="22" width="26" height="21" rx="1.5" stroke="${a}"/><path d="M22 40l7-8 5 5 3-3 5 6" stroke="${a}"/><circle cx="38" cy="28" r="2" stroke="${g}"/><path d="M45 15v6M42 18h6" stroke="${g}"/>`,
 };
@@ -59,8 +77,8 @@ export function BadgeIcon({ id, earned, size = 48, className = "" }: { id: Badge
 }
 
 /** Earned first, then milestones with progress in words (never colour alone). */
-export function BadgeGrid({ progress, onOpen }: { progress: Partial<Record<BadgeId, { have: number; earnedOn?: string }>>; onOpen?: (id: BadgeId) => void }) {
-  const rows = [...BADGES].sort((x, y) => Number(Boolean(progress[y.id]?.earnedOn)) - Number(Boolean(progress[x.id]?.earnedOn)));
+export function BadgeGrid({ progress, onOpen, ids }: { progress: Partial<Record<BadgeId, { have: number; earnedOn?: string }>>; onOpen?: (id: BadgeId) => void; ids?: BadgeId[] }) {
+  const rows = BADGES.filter((b) => !ids || ids.includes(b.id)).sort((x, y) => Number(Boolean(progress[y.id]?.earnedOn)) - Number(Boolean(progress[x.id]?.earnedOn)));
   return (
     <ul className="badge-grid">
       {rows.map((b) => {
@@ -77,5 +95,59 @@ export function BadgeGrid({ progress, onOpen }: { progress: Partial<Record<Badge
         );
       })}
     </ul>
+  );
+}
+
+// ---------- reveal: pop + a soft two-note chime, throttled so a run of awards stays pleasant ----------
+let lastChime = 0;
+export function chime() {
+  if (typeof window === "undefined" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  const now = Date.now();
+  if (now - lastChime < 4000) return; // several awards in a row get one chime
+  lastChime = now;
+  try {
+    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new Ctx();
+    [659.25, 987.77].forEach((f, i) => {
+      const o = ctx.createOscillator();
+      const v = ctx.createGain();
+      o.type = "sine";
+      o.frequency.value = f;
+      const t = ctx.currentTime + i * 0.11;
+      v.gain.setValueAtTime(0, t);
+      v.gain.linearRampToValueAtTime(0.07, t + 0.02);
+      v.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
+      o.connect(v).connect(ctx.destination);
+      o.start(t);
+      o.stop(t + 1);
+    });
+    setTimeout(() => void ctx.close(), 1400);
+  } catch {
+    /* audio unavailable: silent */
+  }
+}
+
+/** One combined pop-out for new badges. `quiet` = a small chip instead of the full card (for rapid repeats). */
+export function BadgeReveal({ ids, onView, onClose }: { ids: BadgeId[]; onView?: () => void; onClose: () => void }) {
+  if (!ids.length) return null;
+  const names = ids.map((id) => BADGES.find((b) => b.id === id)?.name ?? id);
+  return (
+    <div className="badge-reveal" aria-live="polite">
+      <div className="badge-reveal-icons">
+        {ids.slice(0, 3).map((id, i) => (
+          <span key={id} className="badge-pop" style={{ animationDelay: `${i * 110}ms` }}>
+            <BadgeIcon id={id} earned size={ids.length > 1 ? 56 : 72} />
+          </span>
+        ))}
+      </div>
+      <div>
+        <span className="eyebrow">{ids.length > 1 ? `${ids.length} badges earned` : "Badge earned"}</span>
+        <strong>{names.join(", ")}</strong>
+        <div className="demo-actions">
+          {onView && <button type="button" className="secondary" onClick={onView}>View badges</button>}
+          <button type="button" className="secondary" onClick={onClose}>Nice</button>
+        </div>
+      </div>
+    </div>
   );
 }

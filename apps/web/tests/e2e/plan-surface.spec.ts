@@ -62,10 +62,11 @@ test('manual availability is saved privately as UTC intervals in the plan time z
   let saved: any;
   await app(page, { 'PUT /api/plans/p/private': async r => { saved = r.request().postDataJSON(); await r.fulfill({ json: { data: { id: 'f' } } }); } }, { '/api/plans/p/private': { ownerUserId: 'own', facts: [], messages: [] } });
   await page.goto('/plans/p/private');
+  await page.getByRole('button', { name: 'I’ll add times myself' }).click();
   await page.getByLabel('Day', { exact: true }).fill('2026-10-30');
   await page.getByLabel('From', { exact: true }).fill('19:00');
   await page.getByLabel('To', { exact: true }).fill('22:30');
-  await page.getByRole('button', { name: 'Save my times' }).click();
+  await page.getByRole('button', { name: 'Save this day' }).click();
   await expect.poll(() => saved).toBeTruthy();
   expect(saved).toEqual({ expectedRevision: 3, fact: { kind: 'availability', value: {
     window: { startAt: '2026-10-30T05:00:00Z', endAt: '2026-10-31T05:00:00Z' },

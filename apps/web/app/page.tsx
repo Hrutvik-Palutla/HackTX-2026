@@ -19,7 +19,7 @@ export default function Home() {
         <h1>Plans with friends, handled.</h1>
         <p className="home-lede">
           Tell SideQuest what you want to do and who’s coming. It finds a time, compares real places and gets everyone
-          to a yes.
+          to a yes. Then the night turns into quests, badges and memories worth repeating.
         </p>
         <HomeSignIn />
       </main>

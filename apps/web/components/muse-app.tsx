@@ -13,7 +13,9 @@ import { PlanNavigation } from "./plan-navigation";
 import { Feedback } from "./feedback";
 import { PlanChatPanel } from './plan-chat-panel';
 import { DropNotebook, CommonGroundPicker, QuestPanel, RecipeEditor, type Ground } from "./standout-panel";
-import { BadgeGrid } from "./badges";
+import { AccountBadges } from "./account-badges";
+import { MemoryBox } from "./memory-box";
+import { chime } from "./badges";
 import { AgreedPlan, AvailabilityEditor, AvailabilityFact, Avatars, Figure, NextAction, OptionCard, PlanJourney, SomethingChanged, SpendingLimitEditor, stageOf } from "./plan-parts";
 import { api, accountApi, ApiError } from "@/lib/api";
 import {
@@ -487,12 +489,11 @@ export function MuseApp({
                 </section>
               )}
               {!onboarding && !authView && (
-                <section className="panel">
-                  <span className="eyebrow">Our adventures</span>
+                <section className="panel" id="badges">
+                  <span className="eyebrow">Your accomplishments</span>
                   <h2>Badges</h2>
-                  <p>Earned with friends when at least two of you confirm an outing. Nothing for streaks or spending.</p>
-                  <BadgeGrid progress={{}} />
-                  <p className="hint">Outing confirmations are coming to live plans next. <Link className="inline-link" href="/try">See how badges work in the demo</Link>.</p>
+                  <p>Earned by getting out with friends: connecting, planning, agreeing and keeping memories. No streaks, nothing for spending.</p>
+                  {session && <AccountBadges userId={session.user.id} />}
                 </section>
               )}
               <section className="panel">
@@ -511,6 +512,7 @@ export function MuseApp({
               {dataLoading && <p role="status">Loading…</p>}
               {view === "plans" && (
                 <>
+                  {session && <AccountBadges userId={session.user.id} compact />}
                   <div className="dashboard-grid">
                     <div>
                       <div className="section-title">
@@ -808,6 +810,19 @@ export function MuseApp({
                           <p className="feedback revised">Review the updated options. Earlier votes were for the previous options and don’t carry over.</p>
                         )}
                         <AgreedPlan plan={plan} planId={id!} />
+                        {stageOf(plan.status) >= 3 && session && (
+                          <MemoryBox
+                            storageKey={`sq:memories:${session.user.id}:${id}`}
+                            title={plan.title ?? "this outing"}
+                            onFirst={() => {
+                              try { localStorage.setItem(`sq:memory-made:${session.user.id}`, "1"); } catch { /* ignore */ }
+                              chime();
+                              setNotice("Badge earned: Worth Keeping.");
+                            }}
+                          />
+                        )}
+                        <details className="options-wrap" open={stageOf(plan.status) < 3 || undefined}>
+                        <summary className={stageOf(plan.status) < 3 ? "visually-hidden" : undefined}>See how the group voted</summary>
                         <section id="options" className="options-section" aria-labelledby="options-title">
                           <div className="section-title">
                             <h2 id="options-title">{stageOf(plan.status) >= 3 ? "How the group voted" : "Options"}</h2>
@@ -895,6 +910,7 @@ export function MuseApp({
                             </form>
                           )}
                         </section>
+                        </details>
                         <SomethingChanged plan={plan} planId={id!} onDone={setNotice} />
                         {['selected', 'quoting', 'awaiting_payment_approval', 'booking', 'needs_handoff', 'handoff', 'booked'].includes(plan.status) && <details className="quest-invite"><summary>Photo challenges and riddles (optional)</summary><p className="hint">A few things to try together once you’re there. Skip it if you just want to hang out.</p><QuestPanel planId={id!} userId={session!.user.id} status={plan.status} /></details>}
                       </div>

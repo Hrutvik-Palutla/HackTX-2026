@@ -27,7 +27,7 @@ test('the demo is clearly labeled, makes no API calls and awards badges once per
     await expect(page.getByRole('button', { name: /^Again Soon\. Earned/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /^Fresh Air\. 1 of 2/ })).toBeVisible();
     await page.getByRole('button', { name: 'Reset demo' }).click();
-    await expect(page.getByRole('heading', { name: 'Plan something' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'We’ve got a quest for you.' })).toBeVisible();
   }
   expect(api).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

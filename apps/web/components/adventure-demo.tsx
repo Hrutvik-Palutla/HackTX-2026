@@ -4,7 +4,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { SideQuestLogo } from "./brand";
-import { BADGES, BadgeGrid, BadgeIcon, badgeSvg, type BadgeId } from "./badges";
+import { BADGES, BadgeGrid, BadgeIcon, BadgeReveal, chime, type BadgeId } from "./badges";
+import { MemoryBox } from "./memory-box";
 
 type Category = "food" | "culture" | "outdoors" | "games" | "music";
 type Idea = { id: string; title: string; place: string; time: string; hour: number; cost: string; costValue: number; category: Category; note: string; unknown?: string; x: number; y: number };
@@ -32,7 +33,7 @@ const CHALLENGES = [
   { id: "c4", kind: "Riddle", text: "I have a face but no mouth, and I tell you when to head home.", answer: "A clock" },
   { id: "c5", kind: "Riddle", text: "The more of me you take, the more you leave behind.", answer: "Footsteps" },
 ];
-const STEPS = ["Start fresh", "Agree on an outing", "Reserve (simulated)", "Tonight’s quest", "We went", "Earlier outings", "Add a photo", "What next?"];
+const STEPS = ["A quest for you", "Check everyone’s time", "Agree on an outing", "Lock it in", "Tonight’s quest", "We went", "Earlier outings", "Memories", "What next?"];
 const QUICK = ["Tonight", "This weekend", "Keep it affordable", "Surprise us"];
 
 function pickIdeas(mode: string, request: string) {
@@ -76,117 +77,8 @@ function Map({ ideas, chosen, onPick }: { ideas: Idea[]; chosen: string | null; 
   );
 }
 
-function sampleImage(): string {
-  // A drawn night scene so the demo never ships someone's real photo.
-  const c = document.createElement("canvas");
-  c.width = 1200;
-  c.height = 900;
-  const g = c.getContext("2d")!;
-  const sky = g.createLinearGradient(0, 0, 0, 900);
-  sky.addColorStop(0, "#151826");
-  sky.addColorStop(1, "#3a3550");
-  g.fillStyle = sky;
-  g.fillRect(0, 0, 1200, 900);
-  for (let i = 0; i < 160; i++) {
-    g.fillStyle = `rgba(255,248,230,${0.3 + ((i * 37) % 70) / 100})`;
-    g.fillRect((i * 173) % 1200, (i * 97) % 520, 2, 2);
-  }
-  g.fillStyle = "#0e0f17";
-  g.fillRect(0, 610, 1200, 290);
-  g.strokeStyle = "#e9c98a";
-  g.lineWidth = 6;
-  g.beginPath();
-  g.moveTo(0, 600);
-  g.quadraticCurveTo(600, 470, 1200, 600);
-  g.stroke();
-  for (let x = 40; x < 1200; x += 70) {
-    g.fillStyle = "#f6dfa8";
-    g.beginPath();
-    g.arc(x, 600 - Math.sin((x / 1200) * Math.PI) * 64, 6, 0, Math.PI * 2);
-    g.fill();
-    g.fillStyle = "rgba(246,223,168,.18)";
-    g.fillRect(x - 2, 640, 4, 120 + ((x * 7) % 90));
-  }
-  [[420, 3], [520, 0], [610, 2]].forEach(([x, k]) => {
-    g.fillStyle = "#07070b";
-    g.beginPath();
-    g.arc(x, 700 - k * 4, 26, 0, Math.PI * 2);
-    g.fill();
-    g.fillRect(x - 30, 722 - k * 4, 60, 140);
-  });
-  return c.toDataURL("image/jpeg", 0.9);
-}
-
-async function normalise(file: File): Promise<string> {
-  if (!/^image\/(jpeg|png|webp|heic|heif)$/.test(file.type) && file.type !== "") throw Error("Choose a JPEG, PNG or WebP photo.");
-  if (file.size > 12_000_000) throw Error("Choose a photo under 12 MB.");
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(Error("That photo couldn’t be opened. Try a JPEG or PNG."));
-      i.src = url;
-    });
-    const scale = Math.min(1, 2048 / Math.max(img.naturalWidth, img.naturalHeight));
-    const c = document.createElement("canvas");
-    c.width = Math.round(img.naturalWidth * scale);
-    c.height = Math.round(img.naturalHeight * scale);
-    c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
-    return c.toDataURL("image/jpeg", 0.88); // re-encoding drops EXIF, including location
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-const loadImage = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = src; });
-
-async function drawCard(canvas: HTMLCanvasElement, o: { photo: string; caption: string; title: string; date: string; names: string | null; badge: BadgeId | null; portrait: boolean }) {
-  const W = 1080;
-  const H = o.portrait ? 1350 : 1080;
-  canvas.width = W;
-  canvas.height = H;
-  const g = canvas.getContext("2d")!;
-  const display = getComputedStyle(document.documentElement).getPropertyValue("--font-display").trim() || "Georgia";
-  const body = getComputedStyle(document.documentElement).getPropertyValue("--font-body").trim() || "system-ui";
-  g.fillStyle = "#fbfbfa";
-  g.fillRect(0, 0, W, H);
-  g.strokeStyle = "#a3834f";
-  g.lineWidth = 2;
-  g.strokeRect(36, 36, W - 72, H - 72);
-  const img = await loadImage(o.photo);
-  const box = { x: 84, y: 84, w: W - 168, h: H - (o.portrait ? 480 : 400) };
-  const s = Math.min(box.w / img.naturalWidth, box.h / img.naturalHeight); // contain: never crop the subject
-  const w = img.naturalWidth * s;
-  const h = img.naturalHeight * s;
-  g.drawImage(img, box.x + (box.w - w) / 2, box.y + (box.h - h) / 2, w, h);
-  let y = box.y + box.h + 78;
-  g.fillStyle = "#a3834f";
-  g.font = `600 22px ${body}`;
-  g.letterSpacing = "6px";
-  g.fillText(`${o.date.toUpperCase()} · SIDEQUEST`, 84, y);
-  g.letterSpacing = "0px";
-  y += 62;
-  g.fillStyle = "#17171a";
-  g.font = `500 56px ${display}`;
-  g.fillText(o.title, 84, y, W - 300);
-  if (o.caption) {
-    y += 54;
-    g.fillStyle = "#3b3a37";
-    g.font = `400 30px ${body}`;
-    g.fillText(o.caption.slice(0, 80), 84, y, W - 300);
-  }
-  if (o.names) {
-    y += 46;
-    g.fillStyle = "#6c6a65";
-    g.font = `400 26px ${body}`;
-    g.fillText(o.names, 84, y, W - 300);
-  }
-  if (o.badge) {
-    const b = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(badgeSvg(o.badge, true, 160))}`);
-    g.drawImage(b, W - 84 - 160, box.y + box.h + 40, 160, 160);
-  }
-}
+const DEMO_MEMORIES = "sq:demo-memories";
+const DEMO_BADGES: BadgeId[] = ["first-outing", "three-outings", "variety", "after-dark", "outdoors", "quest-team", "memory", "full-table"];
 
 export function AdventureDemo() {
   const [step, setStep] = useState(0);
@@ -202,14 +94,13 @@ export function AdventureDemo() {
   const [done, setDone] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState<string[]>([]);
   const [past, setPast] = useState(false);
-  const [photo, setPhoto] = useState<{ src: string; caption: string; shared: boolean; sample: boolean } | null>(null);
-  const [photoError, setPhotoError] = useState("");
   const [suggest, setSuggest] = useState<number | null>(null);
+  const [cal, setCal] = useState<"connected" | "manual" | null>(null);
+  const [slots, setSlots] = useState<boolean[]>([]);
+  const [memoryShared, setMemoryShared] = useState(false);
   const [openBadge, setOpenBadge] = useState<BadgeId | null>(null);
   const [reveal, setReveal] = useState<BadgeId[]>([]);
-  const [card, setCard] = useState({ portrait: false, names: true, badge: true });
-  const [shareNote, setShareNote] = useState("");
-  const cardRef = useRef<HTMLCanvasElement>(null);
+  const [tweak, setTweak] = useState(false);
   const timers = useRef<number[]>([]);
   const later = (fn: () => void, ms: number) => timers.current.push(window.setTimeout(fn, ms));
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
@@ -237,8 +128,9 @@ export function AdventureDemo() {
   set("outdoors", outside, outside >= 2);
   const challenges = Object.keys(done).length;
   set("quest-team", challenges, challenges === 5 && completers.size >= 2);
-  set("memory", photo?.shared ? 1 : 0, Boolean(photo?.shared));
-  const earned = BADGES.filter((b) => progress[b.id]?.earnedOn).map((b) => b.id);
+  set("full-table", outings.length ? people.length : 0, outings.length > 0 && people.length >= 4);
+  set("memory", memoryShared ? 1 : 0, memoryShared);
+  const earned = BADGES.filter((b) => DEMO_BADGES.includes(b.id) && progress[b.id]?.earnedOn).map((b) => b.id);
   const earnedKey = earned.join(",");
   const seen = useRef<Set<BadgeId>>(new Set());
   useEffect(() => {
@@ -246,6 +138,7 @@ export function AdventureDemo() {
     earned.forEach((id) => seen.current.add(id));
     [...seen.current].forEach((id) => { if (!earned.includes(id)) seen.current.delete(id); });
     if (fresh.length) {
+      chime();
       setReveal(fresh);
       later(() => setReveal((r) => (r === fresh ? [] : r)), 6500);
     }
@@ -253,8 +146,9 @@ export function AdventureDemo() {
   }, [earnedKey]);
 
   // ----- actions
-  function plan() {
-    const t = request.toLowerCase();
+  function plan(text = request, picks = quick) {
+    const t = text.toLowerCase();
+    const quick = picks;
     setFacts({
       when: quick.includes("This weekend") || t.includes("weekend") ? "This weekend" : quick.includes("Tonight") || t.includes("tonight") || t.includes("friday") ? `${DATE} · after 7 PM` : "Not set · any evening",
       area: t.includes("east") ? "East Austin" : "Austin · not narrowed",
@@ -300,16 +194,15 @@ export function AdventureDemo() {
   // Presenter: run a step's actions so each one can be shown without filling anything in.
   function runStep(n: number) {
     if (n >= 1 && !facts) plan();
-    if (n === 1 && !chosen) friendsVote();
-    if (n >= 2 && !chosen) setChosen(ideas.find((i) => i.id === "walk")?.id ?? ideas[0]!.id);
-    if (n === 2) setReserved(true);
-    if (n >= 3 && !reserved) setReserved(true);
-    if (n === 3) finishQuest();
-    if (n === 4) confirmFriends();
-    if (n > 4 && confirmed.length < 2) setConfirmed([ME, ...friends]);
-    if (n === 5) setPast(true);
-    if (n === 6 && !photo) setPhoto({ src: sampleImage(), caption: "Bridge lights, finally got the shot.", shared: false, sample: true });
-    if (n === 7) setSuggest(0);
+    if (n >= 2) setCal((c) => c ?? "connected");
+    if (n === 2 && !chosen) friendsVote();
+    if (n >= 3 && !chosen) setChosen(ideas.find((i) => i.id === "walk")?.id ?? ideas[0]!.id);
+    if (n === 3) setReserved(true);
+    if (n >= 4 && !reserved) setReserved(true);
+    if (n === 5) confirmFriends();
+    if (n > 5 && confirmed.length < 2) setConfirmed([ME, ...friends]);
+    if (n === 6) setPast(true);
+    if (n === 8) setSuggest(0);
     setStep(n);
     setTab("plan");
   }
@@ -318,36 +211,9 @@ export function AdventureDemo() {
     timers.current = [];
     seen.current = new Set();
     setStep(0); setTab("plan"); setRequest(""); setQuick([]); setFriends(FRIENDS); setFacts(null); setMode("first"); setVotes({}); setChosen(null);
-    setReserved(false); setDone({}); setConfirmed([]); setPast(false); setPhoto(null); setPhotoError(""); setSuggest(null); setOpenBadge(null); setReveal([]); setShareNote("");
-  }
-
-  useEffect(() => {
-    if (step === 6 && photo?.shared && cardRef.current)
-      void drawCard(cardRef.current, { photo: photo.src, caption: photo.caption, title: pick?.title ?? "Night photo walk", date: "Oct 23", names: card.names ? people.join(", ") : null, badge: card.badge ? (earned.includes("memory") ? "memory" : earned[0] ?? null) : null, portrait: card.portrait });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, photo, card, earnedKey, chosen]);
-
-  async function shareCard(kind: "share" | "download") {
-    const canvas = cardRef.current;
-    if (!canvas) return;
-    const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
-    if (!blob) return;
-    const file = new File([blob], "sidequest-memory.png", { type: "image/png" });
-    if (kind === "share" && navigator.canShare?.({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], text: photo?.caption ?? "" });
-        setShareNote("Opened your share sheet. Pick Instagram, Facebook or anywhere else; SideQuest doesn’t post for you.");
-      } catch {
-        setShareNote("Share cancelled.");
-      }
-      return;
-    }
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "sidequest-memory.png";
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    setShareNote(kind === "share" ? "This browser can’t share files directly, so the card was downloaded. Post it from Instagram or Facebook." : "Card downloaded.");
+    setCal(null); setSlots([]); setMemoryShared(false);
+    try { localStorage.removeItem(DEMO_MEMORIES); } catch { /* ignore */ }
+    setReserved(false); setDone({}); setConfirmed([]); setPast(false); setSuggest(null); setOpenBadge(null); setReveal([]);
   }
 
   const suggestions = [
@@ -394,7 +260,7 @@ export function AdventureDemo() {
         <main className="demo-stage">
           <div className="demo-heading">
             <span className="eyebrow">{DATE} · Austin</span>
-            <h1>{facts ? `${pick?.title ?? "Something fun"} with ${friends.join(" and ") || "just you"}` : "Plan something"}</h1>
+            <h1>{facts ? `${pick?.title ?? "Something fun"} with ${friends.join(" and ") || "just you"}` : "Friday night, sorted"}</h1>
           </div>
           <div className="demo-tabs" role="tablist" aria-label="Plan sections">
             {(["plan", "memories", "badges"] as const).map((t) => (
@@ -421,29 +287,97 @@ export function AdventureDemo() {
               )}
 
               {step === 0 && (
-                <section className="demo-start">
-                  <p className="demo-intro"><strong>Meet Sid,</strong> SideQuest’s planning assistant. Say what you’re in the mood for, or don’t: Sid can start from nothing.</p>
-                  <label>
-                    What do you want to do? <span className="hint">(optional)</span>
-                    <input value={request} onChange={(e) => setRequest(e.target.value)} placeholder="Something fun Friday after 7, about $25 each" />
-                  </label>
-                  <div className="chips" role="group" aria-label="Quick choices">
-                    {QUICK.map((q) => (
-                      <button key={q} type="button" aria-pressed={quick.includes(q)} onClick={() => setQuick((v) => (v.includes(q) ? v.filter((x) => x !== q) : [...v, q]))}>{q}</button>
-                    ))}
+                <section className="quest-banner">
+                  <div className="quest-banner-art" aria-hidden="true">
+                    <img src="/illustrations/canoe.svg" alt="" />
                   </div>
-                  <div className="chips" role="group" aria-label="Who’s coming">
-                    {FRIENDS.map((f) => (
-                      <button key={f} type="button" aria-pressed={friends.includes(f)} onClick={() => setFriends((v) => (v.includes(f) ? v.filter((x) => x !== f) : [...v, f]))}>
-                        <span className="chip-avatar">{f[0]}</span>{f}
-                      </button>
-                    ))}
+                  <div className="quest-scroll">
+                    <div className="scroll-rod" aria-hidden="true" />
+                    <div className="scroll-sheet">
+                      <div>
+                        <span className="eyebrow">Sid · SideQuest’s planner</span>
+                        <h2 className="quest-hero">We’ve got a quest for you.</h2>
+                        <p>Friday night with Maya and Jordan: a night photo walk along the river, 7:30, free. Five small challenges if you want them.</p>
+                        <div className="demo-actions is-centered">
+                          <button type="button" className="demo-primary" onClick={() => { setRequest("Night photo walk"); plan("Night photo walk tonight", ["Tonight"]); }}>Let’s do it</button>
+                          <button type="button" className="secondary" aria-expanded={tweak} onClick={() => setTweak((v) => !v)}>Not our thing</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="scroll-rod" aria-hidden="true" />
                   </div>
-                  <button type="button" className="demo-primary" onClick={plan}>Plan it</button>
+                  {tweak && (
+                    <div className="demo-start">
+                      <label>
+                        Tell Sid what you’re into <span className="hint">(optional)</span>
+                        <input value={request} onChange={(e) => setRequest(e.target.value)} placeholder="Tacos, live music, something outdoors…" />
+                      </label>
+                      <div className="chips" role="group" aria-label="Quick choices">
+                        {QUICK.map((q) => (
+                          <button key={q} type="button" aria-pressed={quick.includes(q)} onClick={() => setQuick((v) => (v.includes(q) ? v.filter((x) => x !== q) : [...v, q]))}>{q}</button>
+                        ))}
+                      </div>
+                      <div className="chips" role="group" aria-label="Who’s coming">
+                        {FRIENDS.map((f) => (
+                          <button key={f} type="button" aria-pressed={friends.includes(f)} onClick={() => setFriends((v) => (v.includes(f) ? v.filter((x) => x !== f) : [...v, f]))}>
+                            <span className="chip-avatar">{f[0]}</span>{f}
+                          </button>
+                        ))}
+                      </div>
+                      <button type="button" className="demo-primary" onClick={() => plan()}>Find another quest</button>
+                    </div>
+                  )}
                 </section>
               )}
 
               {step === 1 && (
+                <section className="demo-cal">
+                  <span className="eyebrow">Before suggesting times</span>
+                  <h2>When is everyone free?</h2>
+                  {!cal ? (
+                    <div className="calendar-first">
+                      <svg viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="9" width="36" height="33" rx="3" /><path d="M6 18h36M15 5v8M33 5v8" /><path d="M15 27h6M27 27h6M15 34h6" className="cal-gold" /></svg>
+                      <div>
+                        <strong>Connect Google Calendar</strong>
+                        <p>Sid reads only busy and free times, never what your events are.</p>
+                        <div className="action-row">
+                          <button type="button" className="demo-primary" onClick={() => setCal("connected")}>Connect (simulated)</button>
+                          <button type="button" className="secondary" onClick={() => setCal("manual")}>I’ll answer myself</button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : cal === "manual" && slots.length < 3 ? (
+                    <div className="slot-ask" key={slots.length}>
+                      <p className="demo-meta">Question {slots.length + 1} of 3</p>
+                      <strong>{["Free Friday 7–10 PM?", "Free Saturday afternoon?", "Free Sunday morning?"][slots.length]}</strong>
+                      <div className="action-row">
+                        <button type="button" className="demo-primary" onClick={() => setSlots((v) => [...v, true])}>Yes</button>
+                        <button type="button" className="secondary" onClick={() => setSlots((v) => [...v, false])}>No</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <figure className="free-chart">
+                        <svg viewBox="0 0 320 120" role="img" aria-label="Friday 5 PM to midnight. Everyone is free from 7:15 to 10:30 PM.">
+                          {["5p", "7p", "9p", "11p"].map((t, i) => <text key={t} x={64 + i * 70} y="112" fontSize="9" fill="#6c6a65">{t}</text>)}
+                          <rect className="free-window" x={64 + 2.25 * 35} y="4" width={3.25 * 35} height="96" fill="#a3834f22" stroke="#a3834f" strokeDasharray="3 3" />
+                          {[[ME, [[0, 1.8]]], ["Maya", [[0, 2.2], [5.6, 7]]], ["Jordan", [[0.5, 2]]]].map(([name, busy], r) => (
+                            <g key={name as string}>
+                              <text x="0" y={22 + r * 32} fontSize="10" fill="#17171a">{name as string}</text>
+                              <rect x="64" y={12 + r * 32} width="245" height="14" fill="none" stroke="#e6e3dc" />
+                              {(busy as number[][]).map(([f, t]) => <rect key={f} className="busy" x={64 + f * 35} y={12 + r * 32} width={(t - f) * 35} height="14" fill="#cfc6b4" />)}
+                            </g>
+                          ))}
+                        </svg>
+                        <figcaption>{cal === "connected" ? "From calendars (simulated): busy blocks only." : "From your answers plus Maya’s and Jordan’s calendars."} Everyone is free 7:15–10:30 PM.</figcaption>
+                      </figure>
+                      <button type="button" className="demo-primary" onClick={() => setStep(2)}>See options for that window</button>
+                    </>
+                  )}
+                </section>
+              )}
+
+              {step === 2 && (
                 <section>
                   <div className="demo-split">
                     <div className="demo-options">
@@ -479,13 +413,13 @@ export function AdventureDemo() {
                   ) : (
                     <div className="demo-agreed" role="status">
                       <strong>Everyone can do {pick?.title}.</strong>
-                      <button type="button" className="demo-primary" onClick={() => setStep(2)}>Review it</button>
+                      <button type="button" className="demo-primary" onClick={() => setStep(3)}>Review it</button>
                     </div>
                   )}
                 </section>
               )}
 
-              {step === 2 && pick && (
+              {step === 3 && pick && (
                 <section className="demo-review">
                   <span className="eyebrow">One review before anything happens</span>
                   <h2>{pick.title}</h2>
@@ -501,13 +435,13 @@ export function AdventureDemo() {
                   ) : (
                     <div className="demo-agreed" role="status">
                       <strong>{pick.costValue === 0 ? "Plan agreed." : "Simulated confirmation · DEMO-1023 · not a real booking"}</strong>
-                      <button type="button" className="demo-primary" onClick={() => setStep(3)}>See tonight’s quest</button>
+                      <button type="button" className="demo-primary" onClick={() => setStep(4)}>See tonight’s quest</button>
                     </div>
                   )}
                 </section>
               )}
 
-              {step === 3 && (
+              {step === 4 && (
                 <section>
                   <div className="quest-scroll">
                     <div className="scroll-rod" aria-hidden="true" />
@@ -533,12 +467,12 @@ export function AdventureDemo() {
                   </div>
                   <div className="demo-actions">
                     <button type="button" className="secondary" onClick={finishQuest}>Maya and Jordan finish theirs</button>
-                    <button type="button" className="demo-primary" onClick={() => setStep(4)}>Later that night…</button>
+                    <button type="button" className="demo-primary" onClick={() => setStep(5)}>Later that night…</button>
                   </div>
                 </section>
               )}
 
-              {step === 4 && (
+              {step === 5 && (
                 <section className="demo-went">
                   <span className="eyebrow">After the outing</span>
                   <h2>Did you go?</h2>
@@ -558,12 +492,12 @@ export function AdventureDemo() {
                   </ul>
                   <div className="demo-actions">
                     <button type="button" className="secondary" onClick={confirmFriends}>Maya and Jordan confirm</button>
-                    <button type="button" className="demo-primary" disabled={confirmed.length < 2} onClick={() => setStep(5)}>Next</button>
+                    <button type="button" className="demo-primary" disabled={confirmed.length < 2} onClick={() => setStep(6)}>Next</button>
                   </div>
                 </section>
               )}
 
-              {step === 5 && (
+              {step === 6 && (
                 <section>
                   <span className="eyebrow">Our adventures</span>
                   <h2>This group’s history</h2>
@@ -574,69 +508,18 @@ export function AdventureDemo() {
                     ))}
                   </ol>
                   {!past && <button type="button" className="secondary" onClick={() => setPast(true)}>Add our two earlier outings</button>}
-                  <div className="demo-actions"><button type="button" className="demo-primary" onClick={() => setStep(6)}>Add a photo</button></div>
-                </section>
-              )}
-
-              {step === 6 && (
-                <section className="demo-photo">
-                  <span className="eyebrow">Memories</span>
-                  <h2>Add a photo from tonight</h2>
-                  {!photo ? (
-                    <>
-                      <p>From your phone or laptop. It stays on this device in the demo.</p>
-                      <div className="demo-actions">
-                        <label className="button demo-upload">
-                          Choose a photo
-                          <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (!f) return; setPhotoError(""); void normalise(f).then((src) => setPhoto({ src, caption: "", shared: false, sample: false })).catch((err) => setPhotoError(err.message)); }} />
-                        </label>
-                        <button type="button" className="secondary" onClick={() => setPhoto({ src: sampleImage(), caption: "Bridge lights, finally got the shot.", shared: false, sample: true })}>Use a sample photo</button>
-                      </div>
-                      {photoError && <p role="alert">{photoError}</p>}
-                    </>
-                  ) : !photo.shared ? (
-                    <div className="photo-draft">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={photo.src} alt={photo.sample ? "Sample image: bridge lights at night" : "Your photo"} />
-                      <div>
-                        <p className="demo-meta">Private draft · only you can see it</p>
-                        <label>Caption <span className="hint">(optional)</span><input value={photo.caption} maxLength={80} onChange={(e) => setPhoto({ ...photo, caption: e.target.value })} /></label>
-                        <p className="hint">Location data is removed. Sharing with the group doesn’t post anywhere else.</p>
-                        <div className="demo-actions">
-                          <button type="button" className="demo-primary" onClick={() => setPhoto({ ...photo, shared: true })}>Share with this group</button>
-                          <button type="button" className="secondary" onClick={() => setPhoto(null)}>Discard</button>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="card-builder">
-                      <canvas ref={cardRef} className={card.portrait ? "is-portrait" : undefined} aria-label="Share card preview" role="img" />
-                      <div>
-                        <p className="demo-meta">Shared with Maya and Jordan</p>
-                        <fieldset>
-                          <legend>Share card</legend>
-                          <div className="chips">
-                            <button type="button" aria-pressed={!card.portrait} onClick={() => setCard({ ...card, portrait: false })}>Square</button>
-                            <button type="button" aria-pressed={card.portrait} onClick={() => setCard({ ...card, portrait: true })}>Portrait</button>
-                          </div>
-                          <label className="choice"><input type="checkbox" checked={card.names} onChange={(e) => setCard({ ...card, names: e.target.checked })} />Show names</label>
-                          <label className="choice"><input type="checkbox" checked={card.badge} onChange={(e) => setCard({ ...card, badge: e.target.checked })} />Show a badge</label>
-                        </fieldset>
-                        <div className="demo-actions">
-                          <button type="button" className="demo-primary" onClick={() => void shareCard("share")}>Share to Instagram, Facebook…</button>
-                          <button type="button" className="secondary" onClick={() => void shareCard("download")}>Download image</button>
-                          <button type="button" className="secondary" onClick={() => { void navigator.clipboard?.writeText(photo.caption); setShareNote("Caption copied."); }}>Copy caption</button>
-                        </div>
-                        {shareNote && <p role="status">{shareNote}</p>}
-                        <p className="hint">Uses your device’s share sheet; Instagram and Facebook show up there when installed. Nothing is posted automatically.</p>
-                        <button type="button" className="demo-primary" onClick={() => setStep(7)}>What next?</button>
-                      </div>
-                    </div>
-                  )}
+                  <div className="demo-actions"><button type="button" className="demo-primary" onClick={() => setStep(7)}>Add memories</button></div>
                 </section>
               )}
 
               {step === 7 && (
+                <section>
+                  <MemoryBox storageKey={DEMO_MEMORIES} title="tonight" onFirst={() => setMemoryShared(true)} />
+                  <div className="demo-actions"><button type="button" className="demo-primary" onClick={() => setStep(8)}>What next?</button></div>
+                </section>
+              )}
+
+              {step === 8 && (
                 <section>
                   <span className="eyebrow">Your next outing</span>
                   <h2>{suggest === null ? "Want an idea?" : "Based on what you’ve done together"}</h2>
@@ -674,12 +557,7 @@ export function AdventureDemo() {
                 <ul className="memory-grid">
                   {outings.map((o) => (
                     <li key={o.id}>
-                      {o.id === "current" && photo?.shared ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={photo.src} alt="" />
-                      ) : (
-                        <div className="memory-blank" aria-hidden="true">{o.category}</div>
-                      )}
+                      <div className="memory-blank" aria-hidden="true">{o.category}</div>
                       <strong>{o.title}</strong>
                       <span className="hint">{o.date} · {o.time}</span>
                     </li>
@@ -692,7 +570,7 @@ export function AdventureDemo() {
           {tab === "badges" && (
             <div className="demo-panel">
               <p className="hint">Earned in code from confirmed outings. No streaks, no points, nothing for spending more.</p>
-              <BadgeGrid progress={progress} onOpen={setOpenBadge} />
+              <BadgeGrid progress={progress} onOpen={setOpenBadge} ids={DEMO_BADGES} />
               {badgeInfo && (
                 <div className="badge-detail" role="dialog" aria-label={badgeInfo.name}>
                   <BadgeIcon id={badgeInfo.id} earned={earned.includes(badgeInfo.id)} size={80} />
@@ -709,19 +587,7 @@ export function AdventureDemo() {
         </main>
       </div>
 
-      {reveal.length > 0 && (
-        <div className="badge-reveal" role="status">
-          <div className="badge-reveal-icons">{reveal.map((id) => <BadgeIcon key={id} id={id} earned size={reveal.length > 1 ? 56 : 72} className="is-revealing" />)}</div>
-          <div>
-            <span className="eyebrow">{reveal.length > 1 ? `${reveal.length} badges earned` : "Badge earned"}</span>
-            <strong>{reveal.map((id) => BADGES.find((b) => b.id === id)!.name).join(", ")}</strong>
-            <div className="demo-actions">
-              <button type="button" className="secondary" onClick={() => { setTab("badges"); setReveal([]); }}>View badges</button>
-              <button type="button" className="secondary" onClick={() => setReveal([])}>Dismiss</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <BadgeReveal ids={reveal} onView={() => { setTab("badges"); setReveal([]); }} onClose={() => setReveal([])} />
     </div>
   );
 }
