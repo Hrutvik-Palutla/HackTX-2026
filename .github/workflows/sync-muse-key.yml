@@ -59,7 +59,8 @@ jobs:
         run: |
           # Key and relay URL travel on stdin, never on a command line.
           scp -i "$RUNNER_TEMP/key" -o BatchMode=yes -o StrictHostKeyChecking=yes "$RUNNER_TEMP/probe.mjs" "root@$DEPLOY_HOST:/opt/sidequest/muse-probe.mjs"
-          $SSH_CMD 'docker cp /opt/sidequest/muse-probe.mjs sidequest-worker-1:/tmp/muse-probe.mjs'
+          # No secrets in the script; the worker runs as `node`, so the copy must be world-readable.
+          $SSH_CMD 'chmod 644 /opt/sidequest/muse-probe.mjs && docker cp /opt/sidequest/muse-probe.mjs sidequest-worker-1:/tmp/muse-probe.mjs'
           python3 -c 'import json, os; bases=[["direct","https://api.meta.ai/v1"]] + ([["relay", os.environ["RELAY_BASE"].rstrip("/")]] if os.environ.get("RELAY_BASE") else []); print(json.dumps({"key": os.environ["CANDIDATE_KEY"], "bases": bases}))' \
             | $SSH_CMD 'docker exec -i sidequest-worker-1 node /tmp/muse-probe.mjs'
       - name: Install MODEL_API_KEY and MUSE_BASE_URL, recreate containers
@@ -79,7 +80,8 @@ jobs:
       - name: Probe the recreated worker through its installed settings
         run: |
           sleep 10
-          $SSH_CMD 'docker cp /opt/sidequest/muse-probe.mjs sidequest-worker-1:/tmp/muse-probe.mjs'
+          # No secrets in the script; the worker runs as `node`, so the copy must be world-readable.
+          $SSH_CMD 'chmod 644 /opt/sidequest/muse-probe.mjs && docker cp /opt/sidequest/muse-probe.mjs sidequest-worker-1:/tmp/muse-probe.mjs'
           # Empty key = use the worker's MODEL_API_KEY; base = the worker's MUSE_BASE_URL (or Meta directly).
           echo '{"key":"","bases":[["installed",""]]}' | $SSH_CMD 'docker exec -i sidequest-worker-1 node /tmp/muse-probe.mjs'
           $SSH_CMD 'docker logs --since 2m sidequest-worker-1 2>&1 | tail -20'
