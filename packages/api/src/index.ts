@@ -43,7 +43,7 @@ type NextCtx = { params: Promise<Record<string, string>> };
 const HEADERS = { 'content-type': 'application/json', 'cache-control': 'private, no-store' };
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: HEADERS });
 
-function route(fn: (ctx: Ctx) => Promise<{ data: unknown; revision?: number }>) {
+function route(fn: (ctx: Ctx) => Promise<{ data: unknown; revision?: number } | Response>) {
   return async (req: Request, next: NextCtx): Promise<Response> => {
     const requestId = randomUUID();
     try {
@@ -58,7 +58,8 @@ function route(fn: (ctx: Ctx) => Promise<{ data: unknown; revision?: number }>) 
       const userId = await cfg.getUserId(req);
       if (!userId) return json(401, { error: { code: 'FORBIDDEN', message: 'Sign in required', retryable: false }, requestId });
       const params = (await next?.params) ?? {}; // `next` may be absent when called outside Next
-      return json(200, await fn({ req, db: cfg.db, actor: { userId, source: 'web' }, params, requestId }));
+      const result = await fn({ req, db: cfg.db, actor: { userId, source: 'web' }, params, requestId });
+      return result instanceof Response ? result : json(200, result);
     } catch (e) {
       if (e instanceof AppError) return json(e.status, e.toBody(requestId));
       if (e instanceof z.ZodError) return json(400, { error: { code: 'INVALID', message: e.issues[0]?.message ?? 'Invalid input', retryable: false }, requestId });
@@ -202,11 +203,14 @@ export const postCommonGround = route(async ({ req, db, actor }) => {
   return { data: await findCommonGround(db, createMuse(), actor, input.friendIds) };
 });
 export const getPlanGround = route(async ({ db, actor, params }) => { await assertMember(db, params.id!, actor.userId); return { data: await planGround(db, params.id!) }; });
-export const getQuest = route(async ({ db, actor, params }) => ({ data: await readQuest(db, actor, params.id!) }));
-export const postQuest = route(async ({ db, actor, params }) => ({ data: await generateQuest(db, createMuse(), actor, params.id!) }));
+function questView<T extends { art?: string; versionId: string; optionId: string }>(quest: T | null, planId: string) {
+  return quest?.art ? { ...quest, art: `/api/plans/${planId}/quest/art?version=${quest.versionId}&option=${quest.optionId}` } : quest;
+}
+export const getQuest = route(async ({ db, actor, params }) => ({ data: questView(await readQuest(db, actor, params.id!), params.id!) }));
+export const postQuest = route(async ({ db, actor, params }) => ({ data: questView(await generateQuest(db, createMuse(), actor, params.id!), params.id!) }));
 export const patchQuest = route(async ({ req, db, actor, params }) => {
   const input = await body(req, z.object({ challengeId: z.string().uuid(), done: z.boolean() }));
-  return { data: await completeQuestChallenge(db, actor, params.id!, input.challengeId, input.done) };
+  return { data: questView(await completeQuestChallenge(db, actor, params.id!, input.challengeId, input.done), params.id!) };
 });
 export const postPhotoDescription = route(async ({ req, db, actor }) => {
   const input = await body(req, z.object({ dataUrl: z.string().max(1_600_000) }));
@@ -218,7 +222,13 @@ export const postVoiceTranscription = route(async ({ req, db, actor }) => {
   if (!(file instanceof Blob)) throw new AppError('INVALID', 'Choose a WAV recording.');
   return { data: await transcribeVoice(db, actor, file) };
 });
-export const postQuestArt = route(async ({ db, actor, params }) => ({ data: await createQuestArt(db, actor, params.id!) }));
+export const postQuestArt = route(async ({ db, actor, params }) => ({ data: questView(await createQuestArt(db, actor, params.id!), params.id!) }));
+export const getQuestArt = route(async ({ req, db, actor, params }) => {
+  const quest = await readQuest(db, actor, params.id!);
+  const query = new URL(req.url).searchParams;
+  if (!quest?.art?.startsWith('data:image/png;base64,') || query.get('version') !== quest.versionId || query.get('option') !== quest.optionId) throw new AppError('NOT_FOUND', 'Not found');
+  return new Response(Buffer.from(quest.art.slice('data:image/png;base64,'.length), 'base64'), { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'private, no-cache', 'X-Content-Type-Options': 'nosniff' } });
+});
 
 export const getStudioRuns = route(async ({ req, db, actor }) => {
   assertTeam(actor);
