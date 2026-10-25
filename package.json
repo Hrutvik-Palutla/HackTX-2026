@@ -23,7 +23,8 @@
     "worker": "pnpm --filter @hacktx/worker start",
     "muse:smoke": "pnpm --filter @hacktx/agent smoke",
     "agent:demo": "pnpm --filter @hacktx/agent demo",
-    "test:part4": "cd packages/fulfillment && node --test test/*.test.ts ../discovery/test/*.test.ts ../integrations/link-wallet.test.ts ../../apps/booking-worker/*.test.ts"
+    "test:part4": "cd packages/fulfillment && node --test test/*.test.ts ../discovery/test/*.test.ts ../integrations/link-wallet.test.ts ../../apps/booking-worker/*.test.ts",
+    "test:part3": "vitest run --config packages/integrations/vitest.part3.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

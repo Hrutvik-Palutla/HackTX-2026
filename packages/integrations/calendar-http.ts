@@ -8,8 +8,9 @@ import {
 } from './google-calendar.ts';
 
 type Deps = { db: Db; getUserId: (req: Request) => Promise<string | null>; fetch?: typeof fetch; env?: NodeJS.ProcessEnv };
-let deps: Deps | null = null;
-export const configureCalendar = (d: Deps) => { deps = d; };
+// Next bundles instrumentation and routes separately; share the configured runtime across them.
+const registry = globalThis as typeof globalThis & { sidequestCalendar?: Deps };
+export const configureCalendar = (d: Deps) => { registry.sidequestCalendar = d; };
 
 const NONCE_COOKIE = 'sq_cal_nonce';
 const SETTINGS_PATH = '/settings';
@@ -19,8 +20,9 @@ const err = (status: number, code: string, message: string) =>
   Response.json({ error: { code, message, retryable: status >= 500 }, requestId: crypto.randomUUID() }, { status, headers: noStore });
 
 function ready() {
+  const deps = registry.sidequestCalendar;
   if (!deps) throw new AppError('UNRESOLVED', 'Calendar routes are not configured');
-  return { ...deps, cfg: googleConfig(deps.env), f: deps.fetch ?? fetch };
+  return { ...deps, f: deps.fetch ?? fetch };
 }
 
 const sameOrigin = (req: Request, env: NodeJS.ProcessEnv = process.env) => {
@@ -40,9 +42,10 @@ async function guarded(fn: () => Promise<Response>) {
 
 /** GET /api/calendar/connect[?write=1]: redirect to Google consent, bound to this session and browser. */
 export const connectCalendar = (req: Request) => guarded(async () => {
-  const { getUserId, cfg } = ready();
+  const { getUserId, env } = ready();
   const userId = await getUserId(req);
   if (!userId) return err(401, 'UNAUTHORIZED', 'Sign in to continue.');
+  const cfg = googleConfig(env);
   const { state, nonce } = createOAuthState(cfg, userId);
   const write = new URL(req.url).searchParams.get('write') === '1';
   const secure = new URL(cfg.redirectUri).protocol === 'https:' ? '; Secure' : '';
@@ -54,7 +57,8 @@ export const connectCalendar = (req: Request) => guarded(async () => {
 
 /** GET /api/calendar/callback: verify state + nonce + session, exchange the code, then return to settings. */
 export const calendarCallback = (req: Request) => guarded(async () => {
-  const { db, getUserId, cfg, f } = ready();
+  const { db, getUserId, env, f } = ready();
+  const cfg = googleConfig(env);
   const url = new URL(req.url);
   const back = (result: string) => new Response(null, {
     status: 302,
@@ -88,7 +92,7 @@ export const deleteCalendarConnection = (req: Request) => guarded(async () => {
 
 /** POST /api/plans/:id/calendar: add the chosen outing to the caller's own Google Calendar, or point to the ICS. */
 export const addPlanToCalendar = (req: Request, planId: string) => guarded(async () => {
-  const { db, getUserId, cfg, f, env } = ready();
+  const { db, getUserId, f, env } = ready();
   if (!sameOrigin(req, env)) return err(403, 'FORBIDDEN', 'Request origin is not allowed.');
   const userId = await getUserId(req);
   if (!userId) return err(401, 'UNAUTHORIZED', 'Sign in to continue.');
@@ -97,7 +101,7 @@ export const addPlanToCalendar = (req: Request, planId: string) => guarded(async
   if (!found) return err(422, 'UNRESOLVED', 'The group has not chosen an option yet.');
   const icsUrl = `/api/plans/${planId}/calendar.ics`;
   if (!(await connectionStatus(db, userId)).canWriteEvents) return Response.json({ data: { mode: 'ics', icsUrl } }, { headers: noStore });
-  const { eventId } = await new GoogleCalendar(db, cfg, f).upsertOwnEvent(userId, planId, found.versionId);
+  const { eventId } = await new GoogleCalendar(db, googleConfig(env), f).upsertOwnEvent(userId, planId, found.versionId);
   return Response.json({ data: { mode: 'google', eventId, icsUrl } }, { headers: noStore });
 });
 

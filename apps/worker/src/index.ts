@@ -5,6 +5,8 @@ import { createMuse, fixtureDiscovery, handleInbound, runPlanJob, runPollReminde
 import type { DiscoveryPort, JobKind } from '@hacktx/contracts';
 import { createSerpApiDiscovery } from '../../../packages/discovery/src/index.ts';
 import { startClawMessenger } from '@hacktx/integrations/messaging/claw';
+import { GoogleCalendar, googleConfig } from '@hacktx/integrations/google-calendar';
+import { refreshPlanAvailability, createSyncCalendarHandler } from '@hacktx/integrations/calendar-jobs';
 import { handlers, register, type JobHandler } from './registry';
 
 const { db, pool } = createDb();
@@ -12,6 +14,9 @@ const { db, pool } = createDb();
 let museClient: ReturnType<typeof createMuse> | null = null;
 const muse = () => (museClient ??= createMuse());
 const workerId = `worker-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+const calendar = process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REDIRECT_URI
+  ? new GoogleCalendar(db, googleConfig()) : null;
+if (calendar) register('sync_calendar', createSyncCalendarHandler(calendar));
 
 // Real discovery = Part 4's SerpApi adapter (bounded requests, cache, honest unknowns, source metadata).
 // DISCOVERY=fixture is an explicit, FIXTURE-labeled local fallback only.
@@ -26,7 +31,9 @@ if (process.env.DISCOVERY === 'fixture') {
 
 const planHandler: JobHandler = async ({ job }) => {
   if (!discovery) throw new AppError('UNRESOLVED', 'No discovery configured: set SERPAPI_API_KEY (or DISCOVERY=fixture for labeled local data)', true);
-  await runPlanJob({ db, muse: muse(), discovery }, job.payload as { planId: string; inputRevision: number; reason?: string });
+  await runPlanJob({ db, muse: muse(), discovery, ...(calendar ? {
+    refreshAvailability: (planId, window) => refreshPlanAvailability(db, calendar, planId, window),
+  } : {}) }, job.payload as { planId: string; inputRevision: number; reason?: string });
 };
 register('plan', planHandler);
 register('repair', planHandler);

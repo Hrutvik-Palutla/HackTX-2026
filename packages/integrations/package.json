@@ -10,7 +10,8 @@
     "./messaging/claw": "./messaging/claw-adapter.ts",
     "./calendar": "./calendar-http.ts",
     "./google-calendar": "./google-calendar.ts",
-    "./calendar-jobs": "./calendar-jobs.ts"
+    "./calendar-jobs": "./calendar-jobs.ts",
+    "./messaging/otp": "./messaging/otp.ts"
   },
   "dependencies": {
     "@hacktx/contracts": "workspace:*",

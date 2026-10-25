@@ -12,7 +12,7 @@ import { getTemplate } from '@hacktx/templates';
 import type { Muse } from './muse';
 import { LimitError, RunRecorder } from './recorder';
 
-export type PlannerDeps = { db: Db; muse: Muse; discovery: DiscoveryPort; now?: () => Date };
+export type PlannerDeps = { db: Db; muse: Muse; discovery: DiscoveryPort; now?: () => Date; refreshAvailability?: (planId: string, window: Interval) => Promise<unknown> };
 
 const MAX_CANDIDATES = 15;
 const DEFAULT_DURATION_MIN = 120;
@@ -54,6 +54,7 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
       ? { startAt: plan.windowStart.toISOString(), endAt: plan.windowEnd.toISOString() }
       : { startAt: now.toISOString(), endAt: new Date(now.getTime() + 7 * 86_400_000).toISOString() };
     const city = plan.city as City;
+    if (deps.refreshAvailability) await deps.refreshAvailability(plan.id, window);
 
     // 1. Interpret the request (public request text only).
     rec.charge('turn');

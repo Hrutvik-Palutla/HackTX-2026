@@ -18,7 +18,8 @@
     "@hacktx/api": "workspace:*",
     "@hacktx/db": "workspace:*",
     "@hacktx/core": "workspace:*",
-    "@hacktx/fulfillment": "workspace:*"
+    "@hacktx/fulfillment": "workspace:*",
+    "@hacktx/integrations": "workspace:*"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

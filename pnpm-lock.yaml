@@ -47,6 +47,9 @@ importers:
       '@hacktx/fulfillment':
         specifier: workspace:*
         version: link:../../packages/fulfillment
+      '@hacktx/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@muse/accounts':
         specifier: workspace:*
         version: link:../../packages/accounts

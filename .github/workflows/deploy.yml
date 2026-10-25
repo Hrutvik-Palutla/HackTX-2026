@@ -37,15 +37,18 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
-          version: 10.18.3
+          version: 10.34.8
       - name: Set up Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 22.22.0
+          node-version: 24.22.1
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm test:accounts
+      - run: pnpm test:part3
+      - run: pnpm test:part4
       - run: pnpm test:integration
       - run: pnpm build
       - name: Install browser
@@ -64,8 +67,8 @@ jobs:
       cancel-in-progress: false
     env:
       DEPLOY_HOST: ${{ secrets.VULTR_HOST }}
-      SITE_ADDRESS: ":80"
-      APP_BASE_URL: http://144.202.19.9
+      SITE_ADDRESS: getsidequest.tech
+      APP_BASE_URL: https://getsidequest.tech
       DEPLOY_RELEASE: ${{ github.sha }}
       DEPLOY_STRICT_HOST_KEYS: "yes"
       BOOTSTRAP_SERVER: "0"
