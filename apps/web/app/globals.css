@@ -1078,7 +1078,9 @@ button.secondary:hover { background: var(--brand-soft); }
   position: relative;
   min-height: 100svh;
   display: grid;
-  place-items: center;
+  grid-template-columns: minmax(0, 1fr) min(440px, 100%) minmax(0, 1fr);
+  align-items: center;
+  column-gap: clamp(24px, 4vw, 72px);
   padding: 48px 24px;
   overflow: hidden;
   background: var(--canvas);
@@ -1092,7 +1094,7 @@ button.secondary:hover { background: var(--brand-soft); }
   align-items: center;
   text-align: center;
 }
-.home-center .brand-wordmark { width: 220px; margin-bottom: 32px; }
+.home-center .brand-wordmark { width: 256px; margin-bottom: 32px; }
 .home-center h1 { margin: 0 0 18px; font-size: clamp(2.4rem, 5vw, 3.4rem); }
 .home-lede { max-width: 380px; margin: 0 0 36px; color: var(--muted); font-size: 0.95rem; line-height: 1.7; }
 .home-form { width: 100%; display: grid; gap: 18px; text-align: left; }
@@ -1105,28 +1107,34 @@ button.secondary:hover { background: var(--brand-soft); }
 .home-secondary { display: flex; justify-content: center; gap: 20px; }
 .home-secondary button { background: none; color: var(--muted); min-height: 32px; padding: 0; font-size: 0.75rem; letter-spacing: 0.02em; text-decoration: underline; text-underline-offset: 4px; }
 .home-secondary button:hover { background: none; color: var(--ink); }
+/* Two flanks, staggered in a pinwheel around the form: the outer figure of each pair sits further from the text. */
+.home-flank { display: flex; flex-direction: column; gap: clamp(16px, 6vh, 72px); pointer-events: none; }
+.home-flank--start { align-items: flex-end; }
+.home-flank--end { align-items: flex-start; }
 .home-figure {
-  position: absolute;
-  width: clamp(220px, 26vw, 380px);
+  display: block;
+  width: clamp(200px, 21vw, 320px);
   height: auto;
   opacity: 0.9;
-  pointer-events: none;
   user-select: none;
+  animation: home-rise 900ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
-.home-figure--nw { top: 4%; left: 3%; }
-.home-figure--ne { top: 4%; right: 3%; }
-.home-figure--sw { bottom: 3%; left: 3%; }
-.home-figure--se { bottom: 3%; right: 3%; }
+.home-flank--start .home-figure--out { margin-right: 22%; }
+.home-flank--end .home-figure--out { margin-left: 22%; }
+.home-flank--start .home-figure--out { animation-delay: 80ms; }
+.home-flank--end .home-figure--in { animation-delay: 200ms; }
+.home-flank--start .home-figure--in { animation-delay: 320ms; }
+.home-flank--end .home-figure--out { animation-delay: 440ms; }
+@keyframes home-rise { from { opacity: 0; transform: translateY(14px); } }
 @media (max-width: 1100px) {
-  .home-figure { width: clamp(160px, 22vw, 240px); opacity: 0.85; }
+  /* Narrow screens: one pair above the field, one below, side by side. */
+  .home { grid-template-columns: min(440px, 100%); justify-content: center; row-gap: 28px; align-content: center; }
+  .home-flank { flex-direction: row; justify-content: center; align-items: flex-end; gap: 4vw; }
+  .home-figure { width: min(44vw, 230px); opacity: 0.85; }
+  .home-flank .home-figure--out { margin: 0; }
 }
 @media (max-width: 760px) {
-  /* Phones: two figures frame the field above and below instead of four corners. */
-  .home { align-content: start; padding-top: 168px; padding-bottom: 168px; }
-  .home-figure { width: 46vw; }
-  .home-figure--nw { top: 12px; left: 2vw; }
-  .home-figure--ne { top: 12px; right: 2vw; }
-  .home-figure--sw, .home-figure--se { display: none; }
+  .home { align-content: start; padding-top: 24px; }
 }
 
 /* ---------- Signup: calm centred column ---------- */

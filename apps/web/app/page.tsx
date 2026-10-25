@@ -5,10 +5,10 @@ import { HomeIllustration } from "@/components/home-illustration";
 export default function Home() {
   return (
     <div className="home">
-      <HomeIllustration name="canoe" className="home-figure--nw" />
-      <HomeIllustration name="movie-camera" className="home-figure--ne" />
-      <HomeIllustration name="record-player" className="home-figure--sw" />
-      <HomeIllustration name="dinner-table" className="home-figure--se" />
+      <div className="home-flank home-flank--start">
+        <HomeIllustration name="canoe" className="home-figure--out" />
+        <HomeIllustration name="record-player" className="home-figure--in" />
+      </div>
       <main className="home-center">
         <SideQuestLogo />
         <h1>Plans with friends, handled.</h1>
@@ -18,6 +18,10 @@ export default function Home() {
         </p>
         <HomeSignIn />
       </main>
+      <div className="home-flank home-flank--end">
+        <HomeIllustration name="movie-camera" className="home-figure--in" />
+        <HomeIllustration name="dinner-table" className="home-figure--out" />
+      </div>
     </div>
   );
 }
