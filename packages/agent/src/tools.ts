@@ -3,16 +3,16 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { and, eq, inArray, or } from 'drizzle-orm';
-import { conversationMembers, conversations, friendships, messages, messagingIdentities, planConversations, planOptions, plans, user, type Db } from '@hacktx/db';
+import { conversationMembers, conversations, friendships, messages, messagingIdentities, planConversations, planOptions, planParticipants, plans, user, type Db } from '@hacktx/db';
 import { City, type ActorContext } from '@hacktx/contracts';
 import {
   AppError, activeTally, assertMember, createPlan, enqueue, enqueueMessage, parseCity, open, publicPlan,
-  recordDecision, recordVote, requestRepair, savePrivateFact,
+  recordDecision, recordVote, requestRepair, savePrivateFact, updateParticipants, closePlan,
   inviteByPhone, normalizePhone, pendingRequestsFor, respondToFriendRequest,
 } from '@hacktx/core';
 import type { ToolSpec } from './muse';
 import {
-  NOT_SET_UP, afterBooking, bookingLabel, fulfillmentError, fulfillmentService, moveStatus, readSelection, sendHandoff, setBuyer,
+  NOT_SET_UP, afterBooking, bookingLabel, cancelHandoff, fulfillmentError, fulfillmentService, moveStatus, readSelection, sendHandoff, setBuyer,
   type FulfillmentAuthorization, type FulfillmentBooking, type SelectionState, type FulfillmentPort, type FulfillmentQuote, type FulfillmentReimbursement,
 } from './fulfillment';
 
@@ -233,6 +233,37 @@ export const TOOLS = [
     },
   }),
   tool({
+    name: 'remove_participant',
+    description: 'The ORGANIZER explicitly asks to plan without a named participant, including a declined or pending invitee. Remove only that person; never remove someone automatically because they declined or stayed silent.',
+    args: z.object({ participantName: z.string().trim().min(1).max(80) }),
+    async run(ctx, a) {
+      const planId = needPlan(ctx);
+      const plan = await assertMember(ctx.db, planId, ctx.actor.userId);
+      if (plan.organizerUserId !== ctx.actor.userId) throw new AppError('FORBIDDEN', 'Only the organizer can change the participant list.');
+      const people = await ctx.db.select({ userId: planParticipants.userId, inviteId: planParticipants.inviteId, requestedName: planParticipants.requestedName, name: user.name }).from(planParticipants)
+        .leftJoin(user, eq(user.id, planParticipants.userId)).where(eq(planParticipants.planId, planId));
+      const wanted = a.participantName.toLowerCase();
+      const matches = people.filter(person => [person.name, person.requestedName].some(name => name?.toLowerCase() === wanted));
+      const hits = matches.length ? matches : people.filter(person => [person.name, person.requestedName].some(name => name?.toLowerCase().split(/\s+/)[0] === wanted));
+      if (hits.length !== 1) return { removed: false, message: hits.length ? 'Which person do you mean? Use their full name.' : 'That person is not on this plan.' };
+      const person = hits[0]!;
+      await updateParticipants(ctx.db, ctx.actor, { planId, add: [], remove: person.userId ? [person.userId] : [], removeInviteIds: !person.userId && person.inviteId ? [person.inviteId] : [], expectedRevision: plan.inputRevision });
+      const [updated] = await ctx.db.select().from(plans).where(eq(plans.id, planId));
+      return { removed: true, name: person.name ?? person.requestedName, status: updated!.status, hint: updated!.status === 'planning' ? 'Planning now continues for the remaining connected participants.' : 'Other connections are still pending.' };
+    },
+  }),
+  tool({
+    name: 'close_plan',
+    description: 'The ORGANIZER explicitly asks to stop this unbooked plan. Does not cancel purchases or promise refunds.',
+    args: z.object({}),
+    async run(ctx) {
+      const planId = needPlan(ctx);
+      const plan = await assertMember(ctx.db, planId, ctx.actor.userId);
+      await closePlan(ctx.db, ctx.actor, planId, plan.inputRevision);
+      return { closed: true };
+    },
+  }),
+  tool({
     name: 'request_replan',
     description: 'Ask for revised options because a constraint, time, or activity materially changed. Include the full updated activity request in newRequest when changing the activity; kind changes its planning template. Old votes become stale.',
     args: z.object({ reason: z.string().max(200), newRequest: z.string().trim().min(3).max(500).nullable().default(null), kind: z.enum(['movie-night', 'local-outing']).nullable().default(null) }),
@@ -384,6 +415,21 @@ export const TOOLS = [
         await sendHandoff(ctx.db, planId, ctx.actor.userId, sel.option.title, h.handoffUrl);
         return { handoff: true, linkSentPrivately: !!h.handoffUrl, status: bookingLabel(h.booking.status), hint: 'Tell the group the buyer is completing checkout; not booked yet. Ask the buyer to report the total and order number when done.' };
       }, ['selected', 'needs_handoff']);
+    },
+  }),
+  tool({
+    name: 'cancel_handoff',
+    description: 'The BUYER (sender) can cancel an existing checkout handoff only after explicitly confirming the purchase was NOT made. Use only when the buyer clearly says they did not buy the tickets; a request to change the group plan is not confirmation. This cannot cancel a reported purchase or an uncertain charge. Returns the plan to selected so the group can replan.',
+    args: z.object({ purchaseNotMade: z.literal(true) }),
+    async run(ctx, a) {
+      return withBuyer(ctx, async (svc, planId, sel) => {
+        const view = await svc.paymentView(ctx.actor, planId);
+        const handoff = ((view.bookings ?? []) as FulfillmentBooking[])
+          .find((b) => b.versionId === sel.versionId && b.status === 'handoff_required');
+        if (!handoff) return { canceled: false, error: 'NO_OPEN_HANDOFF', message: 'There is no unresolved checkout handoff for the selected option.' };
+        const booking = await cancelHandoff(ctx.db, svc, ctx.actor, planId, handoff.id);
+        return { canceled: true, status: booking.status, hint: 'The handoff was cleared after the buyer confirmed no purchase was made. The group can now request a new plan.' };
+      }, ['needs_handoff']);
     },
   }),
   tool({

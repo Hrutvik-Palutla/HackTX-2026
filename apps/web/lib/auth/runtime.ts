@@ -129,6 +129,29 @@ export function getAccounts(): AccountRuntime | undefined {
             ],
           );
       },
+      async (tx, invite) => {
+        const seats = await tx.query<{ plan_id: string; organizer_user_id: string; recipient_name: string | null }>(
+          `SELECT DISTINCT p.id AS plan_id, p.organizer_user_id, u.name AS recipient_name
+           FROM plan_participants pp JOIN plans p ON p.id=pp.plan_id
+           JOIN "user" u ON u.id=$2
+           WHERE p.organizer_user_id=$3 AND p.status='waiting_connections'
+             AND (pp.invite_id=$1 OR pp.user_id=$2)`,
+          [invite.invitationId, invite.recipientId, invite.inviterId],
+        );
+        const name = seats.rows[0]?.recipient_name?.trim() || "They";
+        for (const seat of seats.rows) {
+          const effectKey = `frienddecline:${invite.invitationId}:${seat.plan_id}`;
+          const result = await tx.query<{ id: string }>(
+            "INSERT INTO outbox (recipient, effect_key, plan_id, body, body_enc) VALUES ($1,$2,$3,NULL,$4) ON CONFLICT (effect_key) DO NOTHING RETURNING id",
+            [JSON.stringify({ kind: "private", userId: seat.organizer_user_id }), effectKey, seat.plan_id,
+              seal("outbox", `${name} isn't connecting right now. Want me to plan without them, or stop this plan?`)],
+          );
+          if (result.rows[0]) await tx.query(
+            "INSERT INTO jobs (kind, dedupe_key, payload) VALUES ('send_outbox',$1,$2) ON CONFLICT (dedupe_key) DO NOTHING",
+            [`send_outbox:${effectKey}`, JSON.stringify({ outboxId: result.rows[0].id })],
+          );
+        }
+      },
     ),
   });
   return registry.sidequestAccounts;

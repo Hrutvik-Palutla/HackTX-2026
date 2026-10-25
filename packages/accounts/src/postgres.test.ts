@@ -154,3 +154,26 @@ test("acceptance binds invite seats and calls resume callback with invitation ID
   assert.equal(callbackTx, harness.tx);
   assert.equal(harness.commits, 1);
 });
+
+test("decline callback runs only after verified recipient resolution in the same transaction", async () => {
+  const harness = makeDatabase((sql) => {
+    if (sql.includes('SELECT id FROM "user"')) return [{ id: "recipient" }];
+    if (sql.includes("UPDATE friend_invites")) return [{ id: "invite-2", inviter_id: "organizer" }];
+    return [];
+  });
+  let callbackTx: SqlConnection | undefined;
+  let callbackInvite: unknown;
+  const repo = postgresAccounts(harness.db, keys, undefined, undefined, async (tx, invite) => {
+    callbackTx = tx;
+    callbackInvite = invite;
+    await tx.query("QUEUE_DECLINE_NOTICE", [invite.invitationId]);
+  });
+  const declined = await repo.resolveRequest("invite-token", "+15125550143", "declined", Date.now(), "recipient");
+  assert.equal(declined, true);
+  assert.equal(callbackTx, harness.tx);
+  assert.deepEqual(callbackInvite, { invitationId: "invite-2", inviterId: "organizer", recipientId: "recipient" });
+  const updateIndex = harness.queries.findIndex((row) => row.sql.includes("UPDATE friend_invites"));
+  const callbackIndex = harness.queries.findIndex((row) => row.sql.includes("QUEUE_DECLINE_NOTICE"));
+  assert.ok(callbackIndex > updateIndex);
+  assert.equal(harness.commits, 1);
+});

@@ -444,3 +444,15 @@ test("Studio uses canonical templates and shows only the redacted execution reco
   );
   await noOverflow(page);
 });
+
+test('movie theater suggestions display unknown time without inventing a date', async ({ page }) => {
+  await page.route('**/api/auth/get-session', route => route.fulfill({ json: { user: { id: 'own', name: 'Jordan' }, session: { id: 's' } } }));
+  await page.route('**/api/me', route => route.fulfill({ json: { data: initialProfile } }));
+  await page.route('**/api/plans/friday', route => route.fulfill({ json: { data: { ...basePlan,
+    options: basePlan.options.map(option => ({ ...option, startAt: null, endAt: null, fit: 'needs_clarification', uncertainties: ['Check showtimes on the theater website'] })),
+  } } }));
+  await page.route('**/api/plans/friday/messages', route => route.fulfill({ json: { data: [] } }));
+  await page.goto('/plans/friday');
+  await expect(page.getByText('Time unknown — check showtimes', { exact: false })).toBeVisible();
+  await expect(page.getByText(/1969|1970/)).toHaveCount(0);
+});

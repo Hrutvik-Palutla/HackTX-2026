@@ -12,6 +12,7 @@ import { loadTemplate } from '@hacktx/templates';
 import { planGround } from './standout';
 import type { Muse } from './muse';
 import { LimitError, RunRecorder } from './recorder';
+import { candidateFromMoviePage, movieTimesOnPage } from './movie-showtimes';
 
 import { refreshPlanAvailability, ensurePlanGroup } from '@hacktx/core';
 
@@ -82,12 +83,70 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
 
     // 2. Real candidates from Part 4's DiscoveryPort (SerpApi).
     rec.charge('search');
-    const found = await rec.step('tool', 'discover_candidates', () =>
+    let movieFallbackSources: import('@hacktx/contracts').Source[] = [];
+    let found = await rec.step('tool', 'discover_candidates', () =>
       !ground && intent.kind === 'movie' && intent.movieTitle
         ? deps.discovery.searchMovie({ title: intent.movieTitle, city, window })
         : deps.discovery.searchOutings({ query: ground?.searchQuery ?? intent.searchQuery, city, window }),
     (r) => ({ summary: `${r.length} candidates`, sourceIds: [...new Set(r.flatMap((c) => c.sourceIds))] }));
+    if (!ground && intent.kind === 'movie' && intent.movieTitle && !found.some(candidate => !!candidate.startAt)) {
+      const adapter = deps.discovery as DiscoveryPort & {
+        searchMovieEvidence?: (input: { title: string; city: City; window: Interval }) => Promise<{ candidates: Candidate[]; sources: import('@hacktx/contracts').Source[] }>;
+        getSources?: () => import('@hacktx/contracts').Source[];
+      };
+      if (adapter.searchMovieEvidence) {
+        try {
+          // The adapter caches this exact query, so this retrieves this call's organic source list without another billable request.
+          const evidence = await adapter.searchMovieEvidence({ title: intent.movieTitle, city, window });
+          movieFallbackSources = evidence.sources;
+        } catch {
+          movieFallbackSources = [];
+        }
+      }
+      if (!adapter.searchMovieEvidence) {
+        const allSources = adapter.getSources?.() ?? [];
+        const expectedSearchTitle = `Google showtimes for ${intent.movieTitle}`.toLocaleLowerCase();
+        const currentSearch = allSources.find(source => source.provider === 'serpapi_google' && source.title.toLocaleLowerCase() === expectedSearchTitle);
+        movieFallbackSources = currentSearch
+          ? allSources.filter(source => source.id === currentSearch.id || source.providerSearchId === currentSearch.providerSearchId)
+          : [];
+      }
+      const pages = movieFallbackSources.filter(source => {
+        if (source.provider !== 'serpapi_google') return false;
+        try { return !/^(?:www\.)?google\.com$/i.test(new URL(source.url).hostname) || !new URL(source.url).pathname.startsWith('/search'); }
+        catch { return false; }
+      }).slice(0, 3);
+      const recovered: Candidate[] = [];
+      const uncertain: Candidate[] = [];
+      const extractedSources: import('@hacktx/contracts').Source[] = [];
+      for (const source of pages) {
+        // Keep a source-backed theater option available even if this page cannot be extracted (JS-only or request cap).
+        uncertain.push(candidateFromMoviePage({ title: intent.movieTitle, city, page: { source, facts: null }, time: null }));
+        try {
+          rec.charge('search');
+        } catch (error) {
+          if (error instanceof LimitError) break;
+          throw error;
+        }
+        try {
+          const page = await deps.discovery.extractPublicPage(source.url);
+          extractedSources.push(page.source);
+          const times = movieTimesOnPage(intent.movieTitle, page.facts);
+          for (const time of times) {
+            const candidate = candidateFromMoviePage({ title: intent.movieTitle, city, page, time });
+            if (candidate.startAt && candidate.startAt >= window.startAt && candidate.startAt < window.endAt) recovered.push(candidate);
+          }
+          uncertain[uncertain.length - 1] = candidateFromMoviePage({ title: intent.movieTitle, city, page, time: null });
+        } catch (error) {
+          if (error instanceof Error && /request limit reached/i.test(error.message)) break;
+          // The organic source URL and title remain useful as a theater page to check manually.
+        }
+      }
+      found = recovered.length ? recovered.slice(0, MAX_CANDIDATES) : uncertain.slice(0, 3);
+      movieFallbackSources = [...movieFallbackSources, ...extractedSources];
+    }
     await persistDiscovery(db, deps.discovery, found);
+    if (movieFallbackSources.length) await persistSourceList(db, movieFallbackSources);
 
     // 3. Deterministic feasibility: availability, window, explicit spending limits.
     const participants = (await db.select({ userId: planParticipants.userId }).from(planParticipants).where(eq(planParticipants.planId, plan.id)))
@@ -104,7 +163,11 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
         const notes: string[] = [];
         if (limit !== null && c.price && c.priceKind !== 'estimated' && c.priceKind !== 'unknown' && c.price.amountMinor > limit) continue;
         if (limit !== null && (!c.price || c.priceKind === 'unknown' || c.priceKind === 'estimated')) notes.push('Price not confirmed yet');
-        if (!c.startAt) { out.push({ c, slot: null, fit: null, notes }); continue; } // time chosen by Muse, checked below
+        if (!c.startAt) {
+          if (intent.kind === 'movie') out.push({ c, slot: null, fit: { fit: 'needs_clarification', unknown: [], conflicts: [] }, notes: [...notes, 'Showtime not confirmed; check source page'] });
+          else out.push({ c, slot: null, fit: null, notes });
+          continue;
+        } // non-movie time may be chosen by Muse, checked below
         const duration = c.durationMinutes ?? intent.durationMinutes;
         if (!duration) notes.push(`Runtime not listed; assumed about ${DEFAULT_DURATION_MIN / 60} hours`);
         const slot = { startAt: c.startAt, endAt: addMin(c.startAt, duration ?? DEFAULT_DURATION_MIN) };
@@ -122,7 +185,9 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
       const what = intent.kind === 'movie' && intent.movieTitle ? `listed showtimes for ${intent.movieTitle}` : 'listed options';
       const text = found.length
         ? "I couldn't find an option that fits everyone's known schedule and limits in that window. Want to try a different day or time range, or a different kind of activity?"
-        : `I couldn't find ${what} near ${city.label} in that window from my sources, and I won't guess times or prices. Want to try different days, a different activity, or tell me a specific showing you've seen?`;
+        : intent.kind === 'movie' && intent.movieTitle
+          ? `I couldn't find ${what} near ${city.label} in that window from my sources. Want to try another day or theater?`
+          : `I couldn't find ${what} near ${city.label} in that window from my sources, and I won't guess times or prices. Want to try different days, a different activity, or tell me a specific showing you've seen?`;
       await setStatus(db, plan.id, plan.inputRevision, 'clarifying');
       await notifyPlan(db, plan.id, `rev${plan.inputRevision}:none`, text);
       await rec.finish('waiting');
@@ -140,7 +205,7 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
         { role: 'system', content: `${template.systemInstruction}
 Pick up to 3 useful, distinct options from the candidates by id. For a candidate with startLocal=null, set startAt to an
 ISO 8601 UTC time inside the window that suits the activity; otherwise set startAt null. Explanation: one short sentence on the real difference versus the other options (format, time of day, listed price,
-location), using ONLY facts present in the candidate data; do not invent atmosphere, amenities or reviews. Title, time,
+location), using ONLY facts present in the candidate data; do not invent atmosphere, amenities or reviews. For movie candidates with no source-confirmed time, leave startAt null. Title, time,
 price and warnings are shown separately, so do not repeat them. Do not mention any individual's constraints.` },
         { role: 'user', content: JSON.stringify({
           request: plan.request,
@@ -166,16 +231,16 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
       const drafts: OptionDraft[] = [];
       const used = new Set<string>();
       // Title comes from the source (keeps the movie name and any FIXTURE label); the model only writes the explanation.
-      const build = (f: Feasible, slot: Interval, fit: SlotFit, explanation: string, extra: string[]) => {
+      const build = (f: Feasible, slot: Interval | null, fit: SlotFit, explanation: string, extra: string[]) => {
         used.add(f.c.id);
         drafts.push({
           label: (['A', 'B', 'C'] as const)[drafts.length]!,
           title: (f.c.venueName && !f.c.title.includes(f.c.venueName) ? `${f.c.title} at ${f.c.venueName}` : f.c.title).slice(0, 160),
           candidateIds: [f.c.id],
-          startAt: slot.startAt,
-          endAt: slot.endAt,
+          startAt: slot?.startAt ?? null,
+          endAt: slot?.endAt ?? null,
           timeZone: tz,
-          timeline: [{ title: f.c.title, startAt: slot.startAt, endAt: slot.endAt, candidateId: f.c.id }],
+          timeline: slot ? [{ title: f.c.title, startAt: slot.startAt, endAt: slot.endAt, candidateId: f.c.id }] : [],
           estimatedPerPerson: f.c.price, // copied from the source, never from the model
           priceKind: f.c.priceKind,
           fit: fit.fit === 'fits_known_constraints' ? 'fits_known_constraints' : 'needs_clarification',
@@ -190,6 +255,10 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
         let slot = f.slot;
         let fit = f.fit;
         if (!slot) {
+          if (intent.kind === 'movie') {
+            build(f, null, fit ?? { fit: 'needs_clarification', unknown: [], conflicts: [] }, p.publicExplanation || 'The source page lists this theater, but its showtime needs confirmation.', ['Time not confirmed; check source page']);
+            continue;
+          }
           if (!p.startAt || Number.isNaN(Date.parse(p.startAt))) continue;
           const startAt = new Date(p.startAt).toISOString();
           slot = { startAt, endAt: addMin(startAt, f.c.durationMinutes ?? intent.durationMinutes ?? DEFAULT_DURATION_MIN) };
@@ -203,8 +272,9 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
       if (!drafts.length) {
         for (const f of feasible.list) {
           if (drafts.length >= 3) break;
-          if (!f.slot || !f.fit || used.has(f.c.id)) continue;
-          build(f, f.slot, f.fit, `${f.c.format ?? f.c.kind.replace('_', ' ')} listed by the source.`, []);
+          if (used.has(f.c.id) || !f.fit) continue;
+          if (!f.slot && intent.kind !== 'movie') continue;
+          build(f, f.slot, f.fit, `${f.c.format ?? f.c.kind.replace('_', ' ')} listed by the source.`, f.slot ? [] : ['Time not confirmed; check source page']);
         }
       }
       return drafts;
@@ -212,7 +282,10 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
 
     if (!options.length) {
       await setStatus(db, plan.id, plan.inputRevision, 'clarifying');
-      await notifyPlan(db, plan.id, `rev${plan.inputRevision}:none`, 'I found places but none with a time I could confirm. What day and time range should I look at?');
+      const text = intent.kind === 'movie' && intent.movieTitle
+        ? `I found theater pages for ${intent.movieTitle}, but none confirmed a screening time. Check the source pages for showtimes, then tell me which theater or time window your group prefers.`
+        : 'I found places but none with a time I could confirm. What day and time range should I look at?';
+      await notifyPlan(db, plan.id, `rev${plan.inputRevision}:none`, text);
       await rec.finish('waiting');
       return { status: 'no_options' as const };
     }
@@ -224,7 +297,7 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
 
     const versionId = published.version.id;
     await ensurePlanGroup(db, plan.id, plan.inputRevision); // private-request plans get a group chat before the first options
-    await notifyPlan(db, plan.id, `options:${versionId}`, formatOptions(published.options, job.reason), versionId);
+    await notifyPlan(db, plan.id, `options:${versionId}`, formatOptions(published.options, job.reason, movieFallbackSources), versionId);
     // Part 3's publish_poll handler posts a native poll (labels in A,B,C order) per group chat, then calls registerPoll.
     for (const g of (await planGroupConversations(db, plan.id)).filter((c) => c.provider !== WEB)) {
       await enqueue(db, { kind: 'publish_poll', planId: plan.id, dedupeKey: `publish_poll:${versionId}:${g.id}`,
@@ -242,15 +315,20 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
   }
 }
 
-export function formatOptions(options: PlanOption[], repairReason?: string) {
+export function formatOptions(options: PlanOption[], repairReason?: string, sourceList: import('@hacktx/contracts').Source[] = []) {
   const n = options.length === 1 ? 'is 1 option' : `are ${options.length} options`;
   const head = repairReason ? `Something changed, so here ${n} that fit now:` : `Here ${n}:`;
+  const sourceById = new Map(sourceList.map(source => [source.id, source]));
   const body = options.map((o) => {
     const price = o.estimatedPerPerson ? `$${(o.estimatedPerPerson.amountMinor / 100).toFixed(2)}/person (${o.priceKind})` : 'price unknown';
     const unsure = o.uncertainties.length ? `\n   ⚠ ${o.uncertainties.join('; ')}` : '';
-    return `${o.label}) ${o.title}: ${localTime(o.startAt, o.timeZone)}, ${price}\n   ${o.publicExplanation}${unsure}`;
+    const sourceLinks = o.startAt ? '' : o.sourceIds.map(id => sourceById.get(id)).filter((source): source is import('@hacktx/contracts').Source => !!source)
+      .map(source => `\n   Check showtimes: ${source.url}`).join('');
+    return `${o.label}) ${o.title}: ${o.startAt ? localTime(o.startAt, o.timeZone) : 'time unknown'}, ${price}\n   ${o.publicExplanation}${unsure}${sourceLinks}`;
   }).join('\n');
-  return `${head}\n${body}\nVote in the poll for every option that works for you, and reply "favorite B" (etc.) for your top pick.`;
+  const unknownTimes = options.some(option => !option.startAt);
+  const prompt = unknownTimes ? '\nWhich theater and time window should I check for the group?' : '';
+  return `${head}\n${body}\nVote in the poll for every option that works for you, and reply "favorite B" (etc.) for your top pick.${prompt}`;
 }
 
 /** Send the same public text to the plan's group chat, or privately to each participant in DM-fallback mode. */
@@ -297,4 +375,8 @@ async function persistDiscovery(db: Db, discovery: DiscoveryPort, found: Candida
     const s = discovery.getSource(id);
     if (s) await db.insert(sources).values({ ...s, fetchedAt: new Date(s.fetchedAt) }).onConflictDoNothing();
   }
+}
+
+async function persistSourceList(db: Db, found: import('@hacktx/contracts').Source[]) {
+  for (const source of found) await db.insert(sources).values({ ...source, fetchedAt: new Date(source.fetchedAt) }).onConflictDoNothing();
 }

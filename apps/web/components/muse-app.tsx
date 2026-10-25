@@ -847,9 +847,9 @@ export function MuseApp({
                                 {o.label}. {o.title}
                               </label>
                               <p>
-                                {new Date(o.startAt).toLocaleString("en-US", {
+                                {o.startAt ? new Date(o.startAt).toLocaleString("en-US", {
                                   timeZone: o.timeZone,
-                                })}{" "}
+                                }) : "Time unknown — check showtimes"}{" "}
                                 ({o.timeZone}) · {money(o.estimatedPerPerson)} ·{" "}
                                 {o.priceKind}
                               </p>

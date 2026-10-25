@@ -46,7 +46,7 @@ async function setup(opts: { directQuotes?: boolean } = {}) {
   };
   const go = await t.say(t.u.Alex!, 'Go ahead with A for all three of us');
   await callTool(go, 'propose_selection', { label: 'A', attendeeUserIds: [t.u.Alex!, t.u.Mark!, t.u.Mel!], evidenceMessageIds: [] });
-  return { ...t, wallet, runJobs, get submissions() { return submissions; } };
+  return { ...t, wallet, service, runJobs, get submissions() { return submissions; } };
 }
 
 describe('booking and payment through Part 4', () => {
@@ -133,5 +133,51 @@ describe('booking and payment through Part 4', () => {
     expect(privateTo(all, t.u.Alex!).join(' ')).not.toContain('simulated share');
     expect(await planStatus(t.db, t.planId)).toBe('booked');
     expect((await jobsOf(t.db, 'sync_calendar')).length).toBe(2);
+  });
+
+  it('buyer can clear only an explicitly unpurchased handoff, then replan the updated request', async () => {
+    const t = await setup();
+    await callTool(await t.say(t.u.Alex!, "I'll pay"), 'confirm_buyer', { confirm: true });
+    await callTool(await t.say(t.u.Alex!, 'send me checkout'), 'checkout_handoff', {});
+    const view = await t.service.paymentView({ userId: t.u.Alex!, source: 'group_message' }, t.planId);
+    const bookingId = (view.bookings as { id: string }[])[0]!.id;
+
+    await expect(callTool(await t.say(t.u.Alex!, 'Change movies'), 'request_replan', {
+      reason: 'Change the movie', newRequest: 'A different movie', kind: 'movie-night',
+    })).rejects.toMatchObject({ code: 'UNRESOLVED' });
+
+    expect(await callTool(await t.say(t.u.Mark!, 'I think the buyer should cancel'), 'cancel_handoff', { purchaseNotMade: true }))
+      .toMatchObject({ error: 'NOT_BUYER' });
+    await expect(callTool(await t.say(t.u.Alex!, 'Can we change the plan?'), 'cancel_handoff', { purchaseNotMade: false }))
+      .rejects.toThrow(); // a group change request is not the required buyer confirmation
+
+    const cleared = await callTool(await t.say(t.u.Alex!, "I did not buy the tickets"), 'cancel_handoff', { purchaseNotMade: true });
+    expect(cleared).toMatchObject({ canceled: true, status: 'failed' });
+    expect(await planStatus(t.db, t.planId)).toBe('selected');
+    const replan = await callTool(await t.say(t.u.Alex!, 'Change to a different movie'), 'request_replan', {
+      reason: 'The checkout handoff was not purchased', newRequest: 'A different movie for the group', kind: 'movie-night',
+    });
+    expect(replan).toMatchObject({ replanning: true });
+    expect(await planStatus(t.db, t.planId)).toBe('planning');
+    expect(t.submissions).toBe(0);
+    const after = await t.service.paymentView({ userId: t.u.Alex!, source: 'group_message' }, t.planId);
+    expect(((after.bookings ?? after.bookingStatus) as { id: string; status: string }[]).find((b) => b.id === bookingId)?.status).toBe('failed');
+  });
+
+  it.each(['outcome_unknown', 'test_confirmed'] as const)('cancel_handoff refuses a %s booking', async (status) => {
+    const t = await setup();
+    await callTool(await t.say(t.u.Alex!, "I'll pay"), 'confirm_buyer', { confirm: true });
+    await callTool(await t.say(t.u.Alex!, 'send me checkout'), 'checkout_handoff', {});
+    await t.service.repository.transact((state) => {
+      const booking = Object.values(state.bookings)[0]!;
+      state.bookings[booking.id] = { ...booking, status };
+    });
+    const view = await t.service.paymentView({ userId: t.u.Alex!, source: 'group_message' }, t.planId);
+    const bookingId = ((view.bookings ?? []) as { id: string }[])[0]!.id;
+    await expect(t.service.resolveUnpurchasedHandoff({ userId: t.u.Alex!, source: 'group_message' }, bookingId))
+      .rejects.toMatchObject({ code: 'INVALID_STATE' });
+    expect(await callTool(await t.say(t.u.Alex!, 'cancel'), 'cancel_handoff', { purchaseNotMade: true }))
+      .toMatchObject({ canceled: false, error: 'NO_OPEN_HANDOFF' });
+    expect(t.submissions).toBe(0);
   });
 });

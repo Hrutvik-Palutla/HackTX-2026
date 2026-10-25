@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { Pool } from "pg";
 import { getMigrations } from "better-auth/db/migration";
@@ -107,11 +108,11 @@ test(
       };
     }
     try {
-      // This DDL exists only in the isolated integration database. Shared production migrations belong to Part 2.
+      // Use the real schema inside this disposable namespace, including pending plan seats.
+      const baseline = readFileSync(new URL("../../../packages/db/drizzle/0000_baseline.sql", import.meta.url), "utf8")
+        .replaceAll('"public".', `"${schema}".`);
+      await pool.query(baseline);
       await (await getMigrations(auth.options)).runMigrations();
-      await pool.query(
-        'CREATE TABLE friendships (user_low_id text NOT NULL REFERENCES "user"(id),user_high_id text NOT NULL REFERENCES "user"(id), requested_by text NOT NULL REFERENCES "user"(id),status text NOT NULL,accepted_at timestamptz,PRIMARY KEY(user_low_id,user_high_id),CHECK(user_low_id<user_high_id)); CREATE TABLE friend_invites (id uuid PRIMARY KEY,inviter_id text NOT NULL REFERENCES "user"(id),recipient_phone_encrypted text NOT NULL,recipient_phone_digest text NOT NULL,token_hash text NOT NULL UNIQUE,state text NOT NULL,expires_at timestamptz NOT NULL,created_at timestamptz NOT NULL);',
-      );
       const jordan = await signup("+15125550101"),
         jamie = await signup("+15125550102"),
         outsider = await signup("+15125550103");
@@ -307,6 +308,7 @@ test(
       assert.deepEqual(resumeUsers, {
         inviterId: jamie.actor.userId,
         recipientId: outsider.actor.userId,
+        invitationId: resumeInvite.invitationId,
       });
       for (let index = 0; index < 20; index++) {
         try {

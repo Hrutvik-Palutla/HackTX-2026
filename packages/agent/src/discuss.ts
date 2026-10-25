@@ -15,7 +15,7 @@ export const NO_REPLY = 'NO_REPLY';
 export const GROUP_INTRO = 'How can I help?';
 const HISTORY = 20;
 // State-changing tools that should succeed at most once per incoming message.
-const ONCE_PER_MESSAGE = new Set(['start_plan', 'respond_friend_request', 'record_vote', 'propose_selection', 'request_replan']);
+const ONCE_PER_MESSAGE = new Set(['start_plan', 'respond_friend_request', 'record_vote', 'propose_selection', 'request_replan', 'remove_participant', 'close_plan', 'cancel_handoff']);
 
 export type InboundJob = { encryptedInbound: string } | { sendingLine: string; message: InboundMessage; joinedGroup?: boolean } | { web: { messageId: string } };
 type Deps = { db: Db; muse: Muse };
@@ -138,6 +138,9 @@ If start_plan reports people who aren't connected, ask for their phone numbers P
 After start_plan succeeds, if its status is waiting_connections explain that invitations are queued and planning waits for acceptance. Otherwise reply briefly that you're finding options (the app posts them). Don't ask about times unless the request has no time frame at all.
 When someone's availability or constraints change, record it (record_availability etc.) and call request_replan if a current option no longer works; say you're updating the options.
 When the group changes the activity, call request_replan with newRequest containing the full updated request (including relevant time/location details) and kind set to movie-night or local-outing when the activity type changes.
+After a declined connection, ask the organizer whether to continue without that person or stop. Only after the organizer explicitly chooses, use remove_participant or close_plan. Never silently remove anyone.
+If the buyer didn't complete checkout and the group wants to change, ask the buyer to confirm nothing was purchased, then call cancel_handoff before request_replan. Uncertain or completed purchases require status checks or the post-booking change flow instead.
+Movie theater options with time unknown are suggestions to check. Ask which theater and date/time window to search next; never invent showtimes or select/book an option whose time is unknown.
 After propose_selection succeeds, confirm the option and who's coming, then ask who will pay for everyone (you may suggest the organizer; never assign it). Nothing is booked or charged yet.
 Call confirm_buyer only when the sender themself says they will pay; someone else nominating them is not enough, so ask that person to confirm.
 After the decision, put seat wishes into get_quote's seatPreference; do not use record_preference or record_availability for them (that re-plans and clears the selection). Ask about seats only if the group hasn't said; default is seats together near the center.
