@@ -56,7 +56,10 @@ export async function ingestClawMessage(db: Db, sendingLine: string, m: ClawInbo
     if (!rows[0]) return false;
     const joinedGroup = m.isGroup ? await onGroupMessage(tx as unknown as Db, sendingLine, m) : false;
     if (!m.isGroup) await maybeGreetStranger(tx as unknown as Db, sendingLine, m);
-    await enqueue(tx as unknown as Db, { kind: 'process_inbound', dedupeKey: `${CLAW_PROVIDER}:${m.messageId}`, payload: { encryptedInbound: seal('inbound', JSON.stringify({ sendingLine, message, joinedGroup })) } });
+    await tx.insert(conversations).values({ provider: CLAW_PROVIDER, sendingLine, externalChatId: m.chatId, kind: m.isGroup ? 'group' : 'private' }).onConflictDoNothing();
+    const [conversation] = await tx.select({ id: conversations.id, activePlanId: conversations.activePlanId }).from(conversations).where(and(
+      eq(conversations.provider, CLAW_PROVIDER), eq(conversations.sendingLine, sendingLine), eq(conversations.externalChatId, m.chatId)));
+    await enqueue(tx as unknown as Db, { kind: 'process_inbound', planId: conversation!.activePlanId, conversationId: conversation!.id, dedupeKey: `${CLAW_PROVIDER}:${m.messageId}`, payload: { encryptedInbound: seal('inbound', JSON.stringify({ sendingLine, message, joinedGroup })) } });
     return true;
   });
 }
@@ -80,6 +83,7 @@ async function onGroupMessage(db: Db, sendingLine: string, m: ClawInboundMessage
 }
 
 async function syncMembers(db: Db, conversationId: string, handles: string[], complete = true) {
+  await db.update(conversations).set({ membershipComplete: complete }).where(eq(conversations.id, conversationId));
   await linkVerifiedPhones(db, CLAW_PROVIDER, handles); // members with verified accounts get named, even before they speak
   const current = await db.select().from(conversationMembers).where(eq(conversationMembers.conversationId, conversationId));
   const idents = handles.length ? await db.select().from(messagingIdentities)

@@ -4,7 +4,7 @@ import { eq, sql, sum } from 'drizzle-orm';
 import { agentRuns, runSteps, type Db } from '@hacktx/db';
 import type { AgentTemplate, RunStep } from '@hacktx/contracts';
 import { AppError } from '@hacktx/core';
-import type { Usage } from './muse';
+import type { Muse, Usage } from './muse';
 
 // Total estimated Muse spend across all runs before new runs are refused (BUDGET_LIMIT). Credits are finite.
 const budgetUsd = () => Number(process.env.MUSE_BUDGET_USD ?? 20);
@@ -14,6 +14,16 @@ const runDeadlineMs = () => Number(process.env.MUSE_RUN_DEADLINE_MS ?? 90_000);
 
 export class LimitError extends Error {}
 
+/** Stop awaiting read-only work on cancellation, even when a test/provider ignores its signal. */
+export function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new LimitError('run cancelled'));
+    if (signal.aborted) { work.catch(() => {}); abort(); return; }
+    signal.addEventListener('abort', abort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort)).catch(() => {});
+  });
+}
+
 export class RunRecorder {
   private index = 0;
   turns = 0;
@@ -21,8 +31,30 @@ export class RunRecorder {
   searches = 0;
   costUsd = 0;
   private readonly startedAt = Date.now();
+  private readonly controller = new AbortController();
+  private readonly deadlineAt = this.startedAt + runDeadlineMs();
+  private readonly timer: ReturnType<typeof setTimeout>;
+  get signal() { return this.controller.signal; }
 
-  private constructor(private db: Db, readonly runId: string, readonly template: AgentTemplate, readonly inputRevision: number) {}
+  private constructor(private db: Db, readonly runId: string, readonly template: AgentTemplate, readonly inputRevision: number) {
+    this.timer = setTimeout(() => this.controller.abort(new LimitError('run time limit reached')), Math.max(0, this.deadlineAt - Date.now()));
+    this.timer.unref?.();
+  }
+
+  bindMuse(muse: Muse): Muse {
+    const signal = (other?: AbortSignal) => other ? AbortSignal.any([other, this.signal]) : this.signal;
+    return { model: muse.model,
+      chat: input => muse.chat({ ...input, signal: signal(input.signal) }),
+      structured: input => muse.structured({ ...input, signal: signal(input.signal) }),
+    };
+  }
+
+  private checkDeadline() {
+    if (this.signal.aborted || Date.now() >= this.deadlineAt) {
+      this.controller.abort(new LimitError('run time limit reached'));
+      throw new LimitError('run time limit reached');
+    }
+  }
 
   static async start(db: Db, input: { planId: string | null; task: string; template: AgentTemplate; model: string; inputRevision: number }) {
     const [{ spent } = { spent: null }] = await db.select({ spent: sum(agentRuns.estimatedCostUsd) }).from(agentRuns);
@@ -36,9 +68,9 @@ export class RunRecorder {
 
   /** Call before a model turn / tool call / search; throws LimitError when the template budget is spent. */
   charge(kind: 'turn' | 'tool' | 'search') {
+    this.checkDeadline();
     const { maxTurns, maxTools, maxSearches } = this.template.limits;
     if (kind === 'turn' && this.costUsd >= runBudgetUsd()) throw new LimitError(`run cost limit ${runBudgetUsd()} USD`);
-    if (kind === 'turn' && Date.now() - this.startedAt >= runDeadlineMs()) throw new LimitError(`run time limit ${runDeadlineMs() / 1000}s`);
     if (kind === 'turn' && ++this.turns > maxTurns) throw new LimitError(`turn limit ${maxTurns}`);
     if (kind === 'tool' && ++this.tools > maxTools) throw new LimitError(`tool limit ${maxTools}`);
     if (kind === 'search' && ++this.searches > maxSearches) throw new LimitError(`search limit ${maxSearches}`);
@@ -53,7 +85,10 @@ export class RunRecorder {
   ): Promise<T> {
     const t0 = Date.now();
     try {
-      const r = await fn();
+      this.checkDeadline();
+      const work = fn();
+      // Do not race state-changing tools: their transaction must finish before reporting an outcome.
+      const r = kind === 'model' || ['research_search', 'research_read', 'discover_candidates'].includes(name) ? await abortable(work, this.signal) : await work;
       const d = describe(r);
       await this.write(kind, name, Date.now() - t0, d.outcome ?? 'ok', d.summary, d.usage, d.sourceIds);
       return r;
@@ -80,6 +115,7 @@ export class RunRecorder {
   }
 
   async finish(status: 'ok' | 'error' | 'stale' | 'waiting' | 'limit', error?: string) {
+    clearTimeout(this.timer);
     await this.db.update(agentRuns).set({
       status, error: error?.slice(0, 300) ?? null, finishedAt: new Date(), toolCalls: this.tools, searches: this.searches,
     }).where(eq(agentRuns.id, this.runId));

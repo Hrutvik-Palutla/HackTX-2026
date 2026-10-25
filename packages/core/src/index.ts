@@ -10,3 +10,4 @@ export * from './conversations';
 export * from './calendar';
 export * from './connections';
 export * from './identities';
+export * from './worker-health';

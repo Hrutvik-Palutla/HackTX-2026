@@ -76,7 +76,7 @@ export async function createPlan(
     }).returning();
     await tx.insert(planParticipants).values([actor.userId, ...participants].map((userId) => ({ planId: plan!.id, userId })));
     if (!missing.length) {
-      await enqueue(tx, { kind: 'plan', planId: plan!.id, dedupeKey: `plan:${plan!.id}:0`, payload: { planId: plan!.id, inputRevision: 0 } });
+      await enqueue(tx, { kind: 'plan', planId: plan!.id, conversationId: actor.conversationId ?? null, dedupeKey: `plan:${plan!.id}:0`, payload: { planId: plan!.id, inputRevision: 0 } });
     }
     return { plan: plan!, missingConnections: missing };
   });

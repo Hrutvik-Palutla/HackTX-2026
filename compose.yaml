@@ -16,6 +16,7 @@ services:
       LINK_AUTH_DIRECTORY: /var/lib/sidequest/link-auth
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: "1"
+      REQUIRE_WORKER_READY: "true"
       HOSTNAME: 0.0.0.0
       PORT: "3000"
     volumes:
@@ -68,6 +69,12 @@ services:
       LINK_AUTH_DIRECTORY: /var/lib/sidequest/link-auth
       NODE_ENV: production
       CLAW_LISTENER_ENABLED: "true"
+    healthcheck:
+      test: ["CMD", "node", "--import=tsx", "apps/worker/src/healthcheck.ts"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     volumes:
       - wallet_data:/var/lib/sidequest/link-auth
 volumes:

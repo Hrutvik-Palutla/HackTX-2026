@@ -253,7 +253,7 @@ export const postMessage = route(async ({ req, db, actor, params, requestId }) =
     conversationId: conv.id, providerMessageId: `web:${requestId}`, senderUserId: actor.userId, senderHandle: `web:${actor.userId}`,
     isPrivate, body: isPrivate ? null : b.text, bodyEnc: isPrivate ? seal('message', b.text) : null, occurredAt: new Date(),
   }).returning({ id: messages.id });
-  await enqueue(db, { kind: 'process_inbound', planId: params.id!, dedupeKey: `web:${row!.id}`, payload: { web: { messageId: row!.id } } });
+  await enqueue(db, { kind: 'process_inbound', planId: params.id!, conversationId: conv.id, dedupeKey: `web:${row!.id}`, payload: { web: { messageId: row!.id } } });
   return { data: { messageId: row!.id } };
 });
 

@@ -59,12 +59,23 @@ export const localTime = (iso: string, tz: string) =>
 const money = (c: Candidate) => (c.price ? `$${(c.price.amountMinor / 100).toFixed(2)} (${c.priceKind})` : c.rawPriceText ?? 'unknown');
 
 export async function runPlanJob(deps: PlannerDeps, job: { planId: string; inputRevision: number; reason?: string }) {
-  const { db, muse } = deps;
+  const { db } = deps;
+  let { muse } = deps;
   const [plan] = await db.select().from(plans).where(eq(plans.id, job.planId));
   if (!plan || plan.inputRevision !== job.inputRevision || plan.status !== 'planning') return { status: 'stale' as const };
 
   const template = await loadTemplate(db, plan.templateId);
-  const rec = await RunRecorder.start(db, { planId: plan.id, task: job.reason ? 'repair' : 'plan', template, model: muse.model, inputRevision: plan.inputRevision });
+  let rec: RunRecorder;
+  try {
+    rec = await RunRecorder.start(db, { planId: plan.id, task: job.reason ? 'repair' : 'plan', template, model: muse.model, inputRevision: plan.inputRevision });
+  } catch (error) {
+    if (!(error instanceof AppError && error.code === 'BUDGET_LIMIT')) throw error;
+    await setStatus(db, plan.id, plan.inputRevision, 'clarifying');
+    await notifyPlan(db, plan.id, `rev${plan.inputRevision}:budget`, 'I’ve reached my planning service budget and can’t search for options right now. Please try again once the service budget is restored.');
+    return { status: 'budget_limit' as const };
+  }
+  muse = rec.bindMuse(muse);
+  deps.discovery.setAbortSignal?.(rec.signal);
   try {
     const now = deps.now?.() ?? new Date();
     const window: Interval = plan.windowStart && plan.windowEnd

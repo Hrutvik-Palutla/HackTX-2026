@@ -1,6 +1,8 @@
 // Durable worker: claims Postgres jobs with leases, runs registered handlers, retries with backoff.
 import { createDb } from '@hacktx/db';
-import { claim, complete, fail, heartbeat, resumeWaitingPlans, AppError } from '@hacktx/core';
+import { resumeWaitingPlans, recordWorkerHeartbeat, AppError, open } from '@hacktx/core';
+import { conversations, jobs, messages } from '@hacktx/db';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { configureFulfillment, createMuse, fixtureDiscovery, fulfillmentJobHandlers, handleInbound, runPlanJob, runPollReminder, type InboundJob } from '@hacktx/agent';
 import type { CalendarPort, DiscoveryPort, JobKind, ResearchPort } from '@hacktx/contracts';
 import { createSerpApiDiscovery } from '../../../packages/discovery/src/index.ts';
@@ -10,6 +12,7 @@ import { createSyncCalendarHandler } from '@hacktx/integrations/calendar-jobs';
 import { createSharedFulfillment, synchronizeFulfillment } from '@hacktx/integrations/fulfillment';
 import { createFulfillmentJobHandlers } from '../../../packages/fulfillment/src/jobs.ts';
 import { handlers, register, type JobHandler } from './registry';
+import { processOneJob } from './runner';
 
 const { db, pool } = createDb();
 // Lazy: non-AI jobs (reminders, Part 3/4 handlers) still run before MODEL_API_KEY exists.
@@ -74,25 +77,45 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { stoppi
 
 const kinds = [...handlers.keys()] as JobKind[];
 console.log(`[worker] ${workerId} handling: ${kinds.join(', ')}`);
-while (!stopping) {
-  try { await synchronizeFulfillment(db, part4.service); }
-  catch { console.error('[worker] Fulfillment projection pending; will retry.'); }
-
-  const job = await claim(db, workerId, 90_000, kinds);
-  if (!job) { await new Promise((r) => setTimeout(r, 1000)); continue; }
-  const beat = setInterval(() => { heartbeat(db, job).catch(() => {}); }, 30_000);
-  const t0 = Date.now();
-  try {
-    await handlers.get(job.kind as JobKind)!({ db, job, heartbeat: () => heartbeat(db, job) });
-    await complete(db, job);
-    console.log(`[worker] ${job.kind} ${job.id} done in ${Date.now() - t0}ms`);
-  } catch (e) {
-    const retryable = !(e instanceof AppError) || e.retryable;
-    console.error(`[worker] ${job.kind} ${job.id} failed (attempt ${job.attempts}):`, e instanceof Error ? e.message : e);
-    await fail(db, job, e, retryable);
-  } finally {
-    clearInterval(beat);
+// Scope queued messages from before the migration before enabling concurrent lanes.
+for (const job of await db.select().from(jobs).where(and(eq(jobs.kind, 'process_inbound'), isNull(jobs.conversationId), inArray(jobs.state, ['queued', 'running'])))) {
+  const raw = job.payload as InboundJob;
+  const payload = 'encryptedInbound' in raw ? JSON.parse(open('inbound', raw.encryptedInbound)) as InboundJob : raw;
+  let conversationId: string | undefined;
+  if ('web' in payload) {
+    conversationId = (await db.select().from(messages).where(eq(messages.id, payload.web.messageId)))[0]?.conversationId;
+  } else if ('message' in payload) {
+    await db.insert(conversations).values({ provider: payload.message.provider, sendingLine: payload.sendingLine,
+      externalChatId: payload.message.conversationExternalId, kind: payload.message.conversationKind }).onConflictDoNothing();
+    conversationId = (await db.select().from(conversations).where(and(eq(conversations.provider, payload.message.provider),
+      eq(conversations.sendingLine, payload.sendingLine), eq(conversations.externalChatId, payload.message.conversationExternalId))))[0]?.id;
+  }
+  if (conversationId) {
+    const [conversation] = await db.select().from(conversations).where(eq(conversations.id, conversationId));
+    await db.update(jobs).set({ conversationId, planId: job.planId ?? conversation?.activePlanId ?? null }).where(eq(jobs.id, job.id));
   }
 }
+
+const deliveryKinds: JobKind[] = ['send_outbox', 'publish_poll'];
+const workKinds = kinds.filter(kind => !deliveryKinds.includes(kind));
+async function lane(role: 'work' | 'delivery', index: number) {
+  const id = `${workerId}:${role}:${index}`;
+  const pulse = () => recordWorkerHeartbeat(db, { id, role, revision: process.env.SOURCE_REVISION ?? 'local',
+    connected: !!claw?.client.connected || !process.env.CLAW_MESSENGER_API_KEY });
+  await pulse();
+  const timer = setInterval(() => { pulse().catch(() => console.error('[worker] heartbeat failed')); }, 10_000);
+  try {
+    while (!stopping) {
+      if (role === 'work' && index === 0) {
+        try { await synchronizeFulfillment(db, part4.service); }
+        catch { console.error('[worker] Fulfillment projection pending; will retry.'); }
+      }
+      if (!await processOneJob(db, id, role === 'delivery' ? kinds.filter(kind => deliveryKinds.includes(kind)) : workKinds, handlers)) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+  } finally { clearInterval(timer); }
+}
+await Promise.all([lane('delivery', 0), lane('work', 0), lane('work', 1)]);
 claw?.stop();
 await pool.end();

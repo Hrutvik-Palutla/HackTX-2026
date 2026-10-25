@@ -12,6 +12,31 @@ function fakeFetch(payload: (url: URL) => unknown, calls: URL[] = []) {
   };
 }
 
+test('research cancellation reaches an in-flight SerpApi request and does not start a fallback browser', async () => {
+  const controller = new AbortController();
+  let transportSignal: AbortSignal | undefined;
+  const client = new SerpApiClient({ apiKey: 'fixture', fetch: async (_url, options) => {
+    transportSignal = options?.signal ?? undefined;
+    return new Promise<Response>((_resolve, reject) => {
+      transportSignal!.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true });
+      setTimeout(() => controller.abort(new Error('Owned test deadline')), 10);
+    });
+  } });
+  const research = new SerpApiResearch(client, { resolveHost: async () => [{ address: '93.184.216.34' }] });
+  await assert.rejects(research.read({ url: 'https://public.example.org/listing', signal: controller.signal }), /Owned test deadline/);
+  assert.equal(transportSignal?.aborted, true);
+});
+
+test('a job-scoped cancellation signal also stops ordinary discovery requests', async () => {
+  const controller = new AbortController();
+  let called = false;
+  const discovery = new SerpApiDiscovery({ apiKey: 'fixture', fetch: async () => { called = true; return Response.json({}); } });
+  discovery.setAbortSignal(controller.signal);
+  controller.abort(new Error('Owned planning deadline'));
+  await assert.rejects(discovery.client.search({ engine: 'google', q: 'owned' }), /Owned planning deadline/);
+  assert.equal(called, false);
+});
+
 test('research search returns structured results, readable evidence, and stable metadata', async () => {
   const calls: URL[] = [];
   const discovery = new SerpApiDiscovery({ apiKey: 'fixture-key', now: () => new Date('2026-10-25T12:00:00Z'), fetch: fakeFetch(() => ({
@@ -41,6 +66,20 @@ test('new research session receives its own bounded request allowance', async ()
 const require = createRequire(new URL('../../../apps/booking-worker/package.json', import.meta.url));
 let chromiumAvailable = false;
 try { chromiumAvailable = existsSync((require('playwright') as { chromium: { executablePath(): string } }).chromium.executablePath()); } catch { /* Browser is optional in local test environments. */ }
+
+test('cancels a rendered public-page read before its normal browser timeout', { skip: !chromiumAvailable }, async () => {
+  const controller = new AbortController();
+  const research = new SerpApiResearch(new SerpApiClient({ apiKey: 'fixture' }), {
+    resolveHost: async () => [{ address: '93.184.216.34' }], timeoutMs: 10_000,
+    fixtureHtml: { url: 'https://public.example.org/slow', html: '<html><body><script>setTimeout(() => document.body.textContent="Loaded later", 5000)</script></body></html>' },
+  });
+  const timer = setTimeout(() => controller.abort(new Error('Owned browser deadline')), 500);
+  const started = Date.now();
+  try { await assert.rejects(research.read({ url: 'https://public.example.org/slow', render: true, signal: controller.signal })); }
+  finally { clearTimeout(timer); }
+  assert.equal(controller.signal.aborted, true);
+  assert.ok(Date.now() - started < 5000);
+});
 
 test('render reads JavaScript populated text without calling Extract', { skip: !chromiumAvailable }, async () => {
   const calls: URL[] = [];

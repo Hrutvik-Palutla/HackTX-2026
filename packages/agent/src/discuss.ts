@@ -3,7 +3,7 @@
 //  - web: a row already stored by the authenticated POST /plans/:id/messages handler
 // Then: bounded Muse tool loop as that sender -> reply in the same conversation.
 import { and, desc, eq, inArray, isNull, ne, or } from 'drizzle-orm';
-import { conversations, messages, messagingIdentities, planOptions, planParticipants, plans, user, type Db } from '@hacktx/db';
+import { conversations, messages, messagingIdentities, planOptions, planParticipants, planningDrafts, plans, user, type Db } from '@hacktx/db';
 import { InboundMessage, type ActorContext, type PlanOption, type ResearchPort } from '@hacktx/contracts';
 import { AGENT_HANDLE, AppError, activeTally, pendingRequestsFor, parseCity, listOwnFacts, open, postToConversation, publicPlan, seal, linkVerifiedPhones } from '@hacktx/core';
 import { loadTemplate } from '@hacktx/templates';
@@ -114,11 +114,16 @@ async function converse(
     plan: plan ? await planContext(db, actor, plan) : null,
     ...(privatePlanChoices.length > 1 ? { openPlans: privatePlanChoices } : {}),
   };
-  context.recentPlanHistory = await recentPlanHistory(db, userId, plan?.id ?? null, kind === 'group' && plan ?
-    (await db.select({ userId: planParticipants.userId }).from(planParticipants).where(eq(planParticipants.planId, plan.id))).map(p => p.userId).filter((id): id is string => !!id) : null);
-  if (kind === 'private') context.pendingConnections = await pendingRequestsFor(db, userId);
+  context.recentPlanHistory = kind === 'private' ? await recentPlanHistory(db, userId, plan?.id ?? null, null) : [];
+  if (kind === 'private') {
+    context.pendingConnections = await pendingRequestsFor(db, userId);
+    context.pendingGroupRequests = (await db.select().from(planningDrafts).where(and(eq(planningDrafts.organizerUserId, userId), isNull(planningDrafts.planId))).orderBy(desc(planningDrafts.updatedAt)).limit(5))
+      .filter(draft => Date.now() - draft.updatedAt.getTime() < 7 * 86_400_000)
+      .map(draft => ({ ...JSON.parse(open('planning-draft', draft.requestEnc)) as object, draftId: draft.id }));
+  }
   if (kind === 'group') {
     const { members, withoutAccount } = await chatMembers(db, conv.id, userId);
+    if (!withoutAccount && conv.membershipComplete) context.recentPlanHistory = await recentPlanHistory(db, userId, plan?.id ?? null, [...new Set([userId, ...members.map(member => member.userId)])]);
     const friends = await friendsAmong(db, userId, members.map((m) => m.userId));
     context.chatMembers = { others: members.map((m) => ({ name: m.name, connectedToSender: friends.has(m.userId) })), withoutAccount };
     // Profile interests were supplied at signup; expose only exact overlap without saying who selected them.
@@ -134,13 +139,15 @@ async function converse(
   }
   if (kind === 'private' && plan) context.yourPrivateFacts = await listOwnFacts(db, actor, plan.id); // sender's own only
 
-  const rec = await RunRecorder.start(db, { planId: plan?.id ?? null, task: 'discuss', template, model: muse.model, inputRevision: plan?.inputRevision ?? 0 });
+  let rec: RunRecorder | undefined;
   const participantIds = plan ? (await db.select({ userId: planParticipants.userId }).from(planParticipants).where(eq(planParticipants.planId, plan.id))).map(p => p.userId).filter((id): id is string => !!id) : [userId];
   const participantNames = participantIds.length ? await db.select({ name: user.name }).from(user).where(inArray(user.id, participantIds)) : [];
   const invitedNames = plan ? (await db.select({ name: planParticipants.requestedName }).from(planParticipants).where(and(eq(planParticipants.planId, plan.id), isNull(planParticipants.userId)))).map(p => p.name).filter((name): name is string => !!name) : [];
-  const ctx: ToolCtx = { db, actor, planId: plan?.id ?? null, conversation: { id: conv.id, kind }, messageId: stored.id, providerMessageId: stored.providerMessageId, availablePlanIds: privatePlanChoices.map(plan => plan.id), research, muse, recorder: rec, researchRedactions: [...participantNames.map(p => p.name), ...invitedNames] };
   try {
-    const reply = await runToolLoop({ muse, rec, ctx, allowedTools: [...template.allowedTools, ...(kind === 'private' ? ['select_plan'] : [])], messages: [
+    rec = await RunRecorder.start(db, { planId: plan?.id ?? null, task: 'discuss', template, model: muse.model, inputRevision: plan?.inputRevision ?? 0 });
+    const boundedMuse = rec.bindMuse(muse);
+    const ctx: ToolCtx = { db, actor, planId: plan?.id ?? null, conversation: { id: conv.id, kind }, messageId: stored.id, providerMessageId: stored.providerMessageId, availablePlanIds: privatePlanChoices.map(plan => plan.id), research, muse: boundedMuse, recorder: rec, researchRedactions: [...participantNames.map(p => p.name), ...invitedNames] };
+    const reply = await runToolLoop({ muse: boundedMuse, rec, ctx, allowedTools: [...template.allowedTools, ...(kind === 'private' ? ['select_plan'] : [])], messages: [
       { role: 'system', content: `${template.systemInstruction}
 You are in a ${kind === 'group' ? 'GROUP chat: everything you write is seen by all members' : 'PRIVATE chat with the sender only'}.
 Respond when addressed or when the message affects the plan (availability, votes, preferences, go-ahead, new requests).
@@ -152,6 +159,7 @@ Use the sender's city from context unless they name another place; do not ask fo
 If the sender is not on the plan's participant list, they can still chat, but only the organizer can add them.
 If context.openPlans contains multiple plans, ask which one they mean before using any plan tool; call select_plan only after they identify a plan. Do not pick the most recent or start a new plan unless they clearly requested one.
 If start_plan reports people who aren't connected, ask for their phone numbers PRIVATELY. Pass the supplied contacts in start_plan.friendContacts along with ALL intended names; the tool creates invitations and holds the plan until acceptance. Never omit an intended person to get past this gate.
+When start_plan queues a private contact question, acknowledge that in the group. In private, use context.pendingGroupRequests and start_plan.draftId to resume the original group request with the supplied contacts. If multiple drafts could match, ask which one first. Do not create a replacement group or omit intended attendees.
 After start_plan succeeds, if its status is waiting_connections explain that invitations are queued and planning waits for acceptance. Otherwise reply briefly that you're finding options (the app posts them). Don't ask about times unless the request has no time frame at all.
 When someone's availability or constraints change, record it (record_availability etc.) and call request_replan if a current option no longer works; say you're updating the options.
 When the group changes the activity or dates, call request_replan with newRequest containing the FULL updated request (including all alternative movies/activities and relevant time/location details), and kind set to movie-night or local-outing when the activity type changes. A changed day/time range MUST include windowStart and windowEnd with explicit offsets in the city's time zone. Resolve relative dates from context.now; next week is the next Monday through Sunday, not today. Preserve the existing window when the day hasn't changed.
@@ -185,13 +193,19 @@ Message ids in brackets can be cited as evidence.` },
     return { status: 'ok' as const, replied };
   } catch (e) {
     if (e instanceof LimitError) {
-      await rec.finish('limit', e.message);
+      await rec?.finish('limit', e.message);
       await postToConversation(db, conv, 'That needs more digging than I can do in one message. Can you narrow it down (a day, an area, or a specific place)?', {
         effectKey: `agent-limit:${stored.id}`, planId: plan?.id ?? null, privateUserId: userId,
       });
       return { status: 'limit' as const, replied: true };
     }
-    await rec.finish('error', e instanceof Error ? e.message : String(e));
+    await rec?.finish('error', e instanceof Error ? e.message : String(e));
+    if (e instanceof AppError && e.code === 'BUDGET_LIMIT') {
+      await postToConversation(db, conv, 'I’ve reached my planning service budget and can’t process this request right now. Please try again once the service budget is restored.', {
+        effectKey: `agent-budget:${stored.id}`, planId: plan?.id ?? null, privateUserId: userId,
+      });
+      return { status: 'budget_limit' as const, replied: true };
+    }
     // A permanent Muse 4xx is not fixed by retrying the same inbound job. Surface the
     // failure in its conversation so provider errors do not look like a dead listener.
     if (isPermanentMuseClientError(e)) {

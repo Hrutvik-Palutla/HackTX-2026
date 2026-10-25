@@ -14,8 +14,8 @@ export type Usage = { inputTokens: number; outputTokens: number; estimatedCostUs
 
 export interface Muse {
   model: string;
-  chat(input: { messages: ChatMessage[]; tools?: ToolSpec[] }): Promise<{ message: OpenAI.Chat.Completions.ChatCompletionMessage; usage: Usage }>;
-  structured<T>(input: { messages: ChatMessage[]; name: string; schema: z.ZodType<T> }): Promise<{ value: T; usage: Usage }>;
+  chat(input: { messages: ChatMessage[]; tools?: ToolSpec[]; signal?: AbortSignal }): Promise<{ message: OpenAI.Chat.Completions.ChatCompletionMessage; usage: Usage }>;
+  structured<T>(input: { messages: ChatMessage[]; name: string; schema: z.ZodType<T>; signal?: AbortSignal }): Promise<{ value: T; usage: Usage }>;
 }
 
 /**
@@ -35,13 +35,15 @@ export function createMuse(opts: { apiKey?: string; model?: string; baseURL?: st
   // Production probes returned model_not_found and 200 for identical requests seconds
   // apart. The SDK doesn't retry 404s. Retry only that lookup failure, at the model
   // request boundary, so successful plan/payment tools are never replayed for recovery.
-  const request = async <T>(send: () => Promise<T>): Promise<T> => {
+  const request = async <T>(send: () => Promise<T>, signal?: AbortSignal): Promise<T> => {
     for (let attempt = 0; ; attempt++) {
+      signal?.throwIfAborted();
       try { return await send(); }
       catch (error) {
         if (!(error instanceof OpenAI.APIError) || error.status !== 404 || error.code !== 'model_not_found' || attempt >= 4) throw error;
         console.warn(`[muse] model lookup failed for ${model}; retry ${attempt + 1}/4`);
-        await new Promise(resolve => setTimeout(resolve, Math.min(1000, 200 * 2 ** attempt) * (0.75 + Math.random() * 0.5)));
+        const { setTimeout } = await import('node:timers/promises');
+        await setTimeout(Math.min(1000, 200 * 2 ** attempt) * (0.75 + Math.random() * 0.5), undefined, { signal });
       }
     }
   };
@@ -54,23 +56,23 @@ export function createMuse(opts: { apiKey?: string; model?: string; baseURL?: st
 
   return {
     model,
-    async chat({ messages, tools }) {
+    async chat({ messages, tools, signal }) {
       const res = await request(() => client.chat.completions.create({
         model,
         messages,
         // Meta only accepts tool_choice "auto"; mandatory steps are invoked by code, not the model.
         ...(tools?.length ? { tools, tool_choice: 'auto' as const, parallel_tool_calls: false } : {}),
-      }));
+      }, { signal }), signal);
       const message = res.choices[0]?.message;
       if (!message) throw new Error('Muse returned no choices');
       return { message, usage: usageOf(res.usage) };
     },
-    async structured({ messages, name, schema }) {
+    async structured({ messages, name, schema, signal }) {
       const res = await request(() => client.chat.completions.create({
         model,
         messages,
         response_format: { type: 'json_schema', json_schema: { name, strict: true, schema: z.toJSONSchema(schema) as Record<string, unknown> } },
-      }));
+      }, { signal }), signal);
       const text = res.choices[0]?.message?.content ?? '';
       const parsed = schema.safeParse(JSON.parse(text || 'null'));
       if (!parsed.success) throw new Error(`Muse output failed ${name} schema: ${parsed.error.issues[0]?.message ?? 'invalid'}`);

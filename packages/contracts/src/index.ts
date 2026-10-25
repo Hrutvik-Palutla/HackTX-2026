@@ -240,6 +240,8 @@ export interface MessagingPort {
 }
 
 export interface DiscoveryPort {
+  /** Bind cancellation to a job-scoped discovery session. */
+  setAbortSignal?(signal: AbortSignal): void;
   searchMovie(input: { title: string; city: City; window: Interval }): Promise<Candidate[]>;
   searchOutings(input: { query: string; city: City; window: Interval }): Promise<Candidate[]>;
   extractPublicPage(url: string): Promise<{ source: Source; facts: unknown }>;
@@ -258,8 +260,8 @@ export type ResearchPageEvidence = {
 };
 export interface ResearchPort {
   /** Any SerpApi engine and documented public search parameters; adapter validates names and bounds payload size. */
-  search(input: { query: string; engine?: string; params?: Record<string, string> }): Promise<ResearchSearchEvidence>;
-  read(input: { url: string; render?: boolean; actions?: ResearchAction[] }): Promise<ResearchPageEvidence>;
+  search(input: { query: string; engine?: string; params?: Record<string, string>; signal?: AbortSignal }): Promise<ResearchSearchEvidence>;
+  read(input: { url: string; render?: boolean; actions?: ResearchAction[]; signal?: AbortSignal }): Promise<ResearchPageEvidence>;
 }
 
 export type BusyResult = { busy: Interval[]; fetchedAt: Instant; status: 'ok' | 'disconnected' | 'error' };

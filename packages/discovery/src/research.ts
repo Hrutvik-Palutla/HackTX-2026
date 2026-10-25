@@ -66,7 +66,8 @@ export class SerpApiResearch implements ResearchPort {
   private readonly client: SerpApiClient;
   private readonly options: { timeoutMs?: number; maxPageBytes?: number; resolveHost?: Resolver; fixtureHtml?: { url: string; html: string } };
   constructor(client: SerpApiClient, options: { timeoutMs?: number; maxPageBytes?: number; resolveHost?: Resolver; fixtureHtml?: { url: string; html: string } } = {}) { this.client = client; this.options = options; }
-  async search(input: { query: string; engine?: string; params?: Record<string, string> }): Promise<ResearchSearchEvidence> {
+  async search(input: { query: string; engine?: string; params?: Record<string, string>; signal?: AbortSignal }): Promise<ResearchSearchEvidence> {
+    input.signal?.throwIfAborted();
     const query = input.query.trim().slice(0, 300);
     if (!query) throw new TypeError('Research query is required');
     const engine = (input.engine ?? 'google').trim();
@@ -74,14 +75,15 @@ export class SerpApiResearch implements ResearchPort {
     const params = input.params ?? {};
     const entries = Object.entries(params);
     if (entries.length > 20 || entries.some(([key, value]) => !/^[a-z][a-z0-9_]{0,63}$/i.test(key) || ['api_key', 'engine', 'q'].includes(key.toLowerCase()) || typeof value !== 'string' || value.length > 500)) throw new TypeError('SerpApi parameters are invalid or exceed limits');
-    const { body, fetchedAt } = await this.client.searchWithMetadata({ engine, ...Object.fromEntries(entries), q: query, hl: params.hl ?? 'en' });
+    const { body, fetchedAt } = await this.client.searchWithMetadata({ engine, ...Object.fromEntries(entries), q: query, hl: params.hl ?? 'en' }, input.signal);
     const url = engine === 'google_maps' ? `https://www.google.com/maps/search/${encodeURIComponent(query)}` : `https://www.google.com/search?q=${encodeURIComponent(query)}`;
     const lines: string[] = [];
     for (const row of Array.isArray(body.organic_results) ? body.organic_results.slice(0, 20) : []) if (record(row)) lines.push([row.title, row.snippet, row.link].filter(x => typeof x === 'string').join(' — '));
     for (const key of ['events_results', 'local_results']) for (const row of Array.isArray(body[key]) ? (body[key] as unknown[]).slice(0, 20) : []) if (record(row)) lines.push([row.title, row.date, row.address, row.description, row.link].filter(x => typeof x === 'string').join(' — '));
     return { sourceId: `research_${hash(`${url}|${fetchedAt}`)}`, url, fetchedAt, engine, query, text: text(lines.join('\n')), results: sanitized(body) as Row };
   }
-  async read(input: { url: string; render?: boolean; actions?: ResearchAction[] }): Promise<ResearchPageEvidence> {
+  async read(input: { url: string; render?: boolean; actions?: ResearchAction[]; signal?: AbortSignal }): Promise<ResearchPageEvidence> {
+    input.signal?.throwIfAborted();
     const actions = checkedActions(input.actions);
     let url = await checkedUrl(input.url, this.options.resolveHost);
     if (isTransactionalPath(url)) throw new TypeError('Transactional pages cannot be read');
@@ -92,18 +94,19 @@ export class SerpApiResearch implements ResearchPort {
     let structuredDataText: string[] = [];
     if (!input.render) {
       try {
-        const extracted = await this.client.searchWithMetadata({ engine: 'extract', url: url.href, mode: 'scrape', include_markdown: 'true' });
+        const extracted = await this.client.searchWithMetadata({ engine: 'extract', url: url.href, mode: 'scrape', include_markdown: 'true' }, input.signal);
         const content = record(extracted.body.text_content) ? extracted.body.text_content : {};
         pageText = [text(content.full), text(content.markdown)].filter(Boolean).join('\n\n');
         title = typeof extracted.body.title === 'string' ? text(extracted.body.title).slice(0, 300) : null;
         fetchedAt = extracted.fetchedAt;
       } catch (error) {
+        input.signal?.throwIfAborted();
         if (error instanceof Error && /request limit reached/i.test(error.message)) throw error;
         // Extract can fail for public pages; use the read-only browser path as a fallback.
       }
     }
     if (input.render || actions.length || !pageText.trim()) {
-      const rendered = await this.render(url.href, actions);
+      const rendered = await this.render(url.href, actions, input.signal);
       url = await checkedUrl(rendered.url, this.options.resolveHost);
       pageText = rendered.text;
       title = rendered.title;
@@ -116,11 +119,15 @@ export class SerpApiResearch implements ResearchPort {
     const jsonLdText = structuredDataText.map((item, index) => `Structured data ${index + 1}: ${item}`).join('\n');
     return { sourceId: `research_${hash(`${url.href}|${fetchedAt}`)}`, url: url.href, fetchedAt, text: [pageText, linkText, jsonLdText].filter(Boolean).join('\n\n').slice(0, MAX_TEXT), title, links, structuredDataText };
   }
-  private async render(initialUrl: string, actions: ResearchAction[]): Promise<{ url: string; text: string; title: string | null; links: Array<{ text: string; url: string }>; structuredDataText: string[] }> {
+  private async render(initialUrl: string, actions: ResearchAction[], signal?: AbortSignal): Promise<{ url: string; text: string; title: string | null; links: Array<{ text: string; url: string }>; structuredDataText: string[] }> {
+    signal?.throwIfAborted();
     const timeout = Math.min(20_000, this.options.timeoutMs ?? 15_000);
     const maxBytes = this.options.maxPageBytes ?? MAX_RESPONSE;
     let browser: ResearchBrowser | undefined;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let rejectOnAbort: (() => void) | undefined;
+    const cancel = () => { void browser?.close().catch(() => undefined); };
+    signal?.addEventListener('abort', cancel, { once: true });
     try {
       const require = createRequire(new URL('../../../apps/booking-worker/package.json', import.meta.url));
       const { chromium } = require('playwright') as { chromium: { launch(options: unknown): Promise<any> } };
@@ -128,6 +135,7 @@ export class SerpApiResearch implements ResearchPort {
         // Docker's 64 MB /dev/shm crashes Chromium on heavier pages ("browser has been closed") without this flag.
         const activeBrowser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'], timeout }) as ResearchBrowser;
         browser = activeBrowser;
+        if (signal?.aborted) { await browser.close(); signal.throwIfAborted(); }
         const context = await activeBrowser.newContext({ javaScriptEnabled: true, acceptDownloads: false });
         const page = await context.newPage();
         page.setDefaultNavigationTimeout(timeout);
@@ -214,8 +222,15 @@ export class SerpApiResearch implements ResearchPort {
       })();
       // Launch has its own timeout; the page gets the full read budget on top of it.
       const deadline = new Promise<never>((_, reject) => { timeoutId = setTimeout(() => reject(new Error('Browser page read timed out')), timeout + 10_000); });
-      return await Promise.race([task, deadline]);
+      const cancelled = new Promise<never>((_, reject) => {
+        rejectOnAbort = () => reject(signal?.reason ?? new Error('Browser read cancelled'));
+        signal?.addEventListener('abort', rejectOnAbort, { once: true });
+        if (signal?.aborted) rejectOnAbort();
+      });
+      return await Promise.race([task, deadline, cancelled]);
     } finally {
+      signal?.removeEventListener('abort', cancel);
+      if (rejectOnAbort) signal?.removeEventListener('abort', rejectOnAbort);
       if (timeoutId) clearTimeout(timeoutId);
       await browser?.close();
     }

@@ -8,6 +8,20 @@ const completion = (content = 'OK') => Response.json({ id: 'response', object: '
   choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content } }], usage: { prompt_tokens: 2, completion_tokens: 1 } });
 
 describe('Muse model lookup recovery', () => {
+  it('cancels an in-flight SDK request without retrying after the caller deadline', async () => {
+    const controller = new AbortController();
+    let transportSignal: AbortSignal | undefined;
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (_url, options) => {
+      transportSignal = options?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        transportSignal!.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true });
+        setTimeout(() => controller.abort(), 10);
+      });
+    });
+    await expect(createMuse({ apiKey: 'fixture', fetch }).chat({ messages, signal: controller.signal })).rejects.toThrow();
+    expect(transportSignal?.aborted).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it('retries an identical tool request after an intermittent model-not-found response', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(missingModel()).mockResolvedValueOnce(completion());
     const muse = createMuse({ apiKey: 'test-key', fetch });

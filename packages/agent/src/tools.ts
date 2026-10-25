@@ -3,12 +3,12 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { and, eq, inArray, or } from 'drizzle-orm';
-import { conversationMembers, conversations, friendships, messages, messagingIdentities, planConversations, planOptions, planParticipants, plans, sources, user, type Db } from '@hacktx/db';
+import { conversationMembers, conversations, friendships, messages, messagingIdentities, planConversations, planOptions, planParticipants, plans, planningDrafts, researchEvidence, sources, user, type Db } from '@hacktx/db';
 import { City, type ActorContext } from '@hacktx/contracts';
 import {
   AppError, activeTally, assertMember, createPlan, enqueue, enqueueMessage, parseCity, open, publicPlan,
   recordDecision, recordVote, requestRepair, savePrivateFact, updateParticipants, closePlan,
-  inviteByPhone, normalizePhone, pendingRequestsFor, respondToFriendRequest,
+  inviteByPhone, normalizePhone, pendingRequestsFor, respondToFriendRequest, seal,
 } from '@hacktx/core';
 import type { ToolSpec } from './muse';
 import type { ResearchPort } from '@hacktx/contracts';
@@ -41,6 +41,27 @@ const isoUtc = z.string().refine((s) => !Number.isNaN(Date.parse(s)), 'ISO 8601 
 const zonedIsoUtc = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/, 'ISO 8601 timestamp with UTC offset').refine((s) => !Number.isNaN(Date.parse(s)), 'Valid ISO 8601 timestamp').transform((s) => new Date(s).toISOString());
 const Iv = z.object({ startAt: isoUtc, endAt: isoUtc });
 const Label = z.enum(['A', 'B', 'C']);
+const StartPlanArgs = z.object({
+  request: z.string().min(3), friendNames: z.array(z.string()), includeChatMembers: z.boolean().default(false),
+  friendContacts: z.array(z.object({ name: z.string().min(1).max(80), phone: z.string().min(7).max(30) })).default([]),
+  kind: z.enum(['movie-night', 'local-outing']), windowStartAt: isoUtc.nullable(), windowEndAt: isoUtc.nullable(),
+  draftId: z.string().uuid().nullable().default(null),
+});
+
+async function requestDraftContacts(ctx: ToolCtx, args: z.infer<typeof StartPlanArgs>, question: string) {
+  if (ctx.conversation.kind !== 'group') return {};
+  return ctx.db.transaction(async tx => {
+    const [draft] = await tx.insert(planningDrafts).values({ organizerUserId: ctx.actor.userId,
+      conversationId: ctx.conversation.id, requestEnc: seal('planning-draft', JSON.stringify(args)),
+    }).onConflictDoUpdate({ target: [planningDrafts.organizerUserId, planningDrafts.conversationId],
+      set: { requestEnc: seal('planning-draft', JSON.stringify(args)), planId: null, updatedAt: new Date() },
+    }).returning();
+    await enqueueMessage(tx, { recipient: { kind: 'private', userId: ctx.actor.userId },
+      text: `For your group request, "${args.request.slice(0, 200)}": ${question}`,
+      effectKey: `draft-contacts:${ctx.messageId}`, planId: null });
+    return { draftId: draft!.id, privateQuestionQueued: true };
+  });
+}
 
 function needPlan(ctx: ToolCtx) {
   if (!ctx.planId) throw new AppError('UNRESOLVED', 'No active plan in this conversation');
@@ -121,8 +142,13 @@ export const TOOLS = [
         const provider = 'engine' in item ? `serpapi_${item.engine}` : 'serpapi_extract';
         await ctx.db.insert(sources).values({ id: item.sourceId, url: item.url, title: 'Public research source',
           fetchedAt: new Date(item.fetchedAt), provider, providerSearchId: null }).onConflictDoNothing();
+        await ctx.db.insert(researchEvidence).values({ sourceId: item.sourceId, payload: item }).onConflictDoNothing();
       }
-      return result;
+      // The parent discussion needs the answer and citations, not another copy of
+      // every raw search result/page. Full evidence remains available in storage.
+      return { answer: result.answer, steps: result.steps, evidence: result.evidence.map(item => ({
+        sourceId: item.sourceId, url: item.url, fetchedAt: item.fetchedAt,
+      })) };
     },
   }),
   tool({
@@ -141,22 +167,28 @@ export const TOOLS = [
   tool({
     name: 'start_plan',
     description: 'Start a new plan for the sender and named friends. In a group chat set includeChatMembers=true when the request is for the people in this chat ("we", "us", "the three of us"). For unknown names, pass privately supplied friendContacts; the plan waits for connection acceptance. Missing or ambiguous contacts return a question without creating a partial plan.',
-    args: z.object({
-      request: z.string().min(3),
-      friendNames: z.array(z.string()),
-      includeChatMembers: z.boolean().default(false),
-      friendContacts: z.array(z.object({ name: z.string().min(1).max(80), phone: z.string().min(7).max(30) })).default([]),
-      kind: z.enum(['movie-night', 'local-outing']),
-      windowStartAt: isoUtc.nullable(),
-      windowEndAt: isoUtc.nullable(),
-    }),
+    args: StartPlanArgs,
     async run(ctx, a) {
+      let origin = ctx.conversation;
+      if (a.draftId) {
+        if (ctx.conversation.kind !== 'private') throw new AppError('FORBIDDEN', 'Resume contact collection privately.');
+        const [draft] = await ctx.db.select().from(planningDrafts).where(and(eq(planningDrafts.id, a.draftId), eq(planningDrafts.organizerUserId, ctx.actor.userId)));
+        if (!draft || Date.now() - draft.updatedAt.getTime() > 7 * 86_400_000) throw new AppError('NOT_FOUND', 'Pending request not found.');
+        if (draft.planId) return { created: true, planId: draft.planId, alreadyResumed: true };
+        const [group] = await ctx.db.select().from(conversations).where(eq(conversations.id, draft.conversationId));
+        const [active] = group?.activePlanId ? await ctx.db.select().from(plans).where(eq(plans.id, group.activePlanId)) : [];
+        if (!group || group.kind !== 'group' || (active && active.status !== 'closed')) throw new AppError('INVALID', 'The original group already has a plan or is unavailable.');
+        const saved = StartPlanArgs.parse(JSON.parse(open('planning-draft', draft.requestEnc)));
+        a = { ...saved, draftId: draft.id, friendContacts: a.friendContacts,
+          friendNames: [...new Set([...saved.friendNames, ...a.friendContacts.map(contact => contact.name)])] };
+        origin = { id: group.id, kind: 'group' };
+      }
       if (ctx.planId && ctx.conversation.kind === 'group') return { error: 'This group already has an active plan', planId: ctx.planId };
       const r = await resolveFriendNames(ctx.db, ctx.actor.userId, a.friendNames);
       const pending = new Set(r.unknown);
       let unresolvedChatMembers = 0;
-      if (a.includeChatMembers && ctx.conversation.kind === 'group') {
-        const { members, withoutAccount } = await chatMembers(ctx.db, ctx.conversation.id, ctx.actor.userId);
+      if (a.includeChatMembers && origin.kind === 'group') {
+        const { members, withoutAccount } = await chatMembers(ctx.db, origin.id, ctx.actor.userId);
         unresolvedChatMembers = withoutAccount;
         const friends = await friendsAmong(ctx.db, ctx.actor.userId, members.map(m => m.userId));
         for (const member of members) {
@@ -165,19 +197,33 @@ export const TOOLS = [
         }
       }
       if (r.ambiguous.length) return { created: false, ambiguous: r.ambiguous };
-      if (unresolvedChatMembers) return { created: false, needsSetup: unresolvedChatMembers, hint: 'Some chat members have not linked an account. Ask the organizer privately to identify the intended participants and provide their contacts.' };
+      if (unresolvedChatMembers && (!a.draftId || a.friendContacts.length < unresolvedChatMembers)) return {
+        created: false, needsSetup: unresolvedChatMembers,
+        ...await requestDraftContacts(ctx, a, 'Please send the names and phone numbers of the intended attendees who have not set up their accounts.'),
+        hint: 'Collect missing contacts privately, then resume the pending draft with all intended attendees.',
+      };
       const contacts = [...pending].map(name => ({ name, matches: a.friendContacts.filter(contact => contact.name.trim().toLowerCase() === name.trim().toLowerCase()) }));
       const needsPhoneFor = contacts.filter(contact => contact.matches.length !== 1).map(contact => contact.name);
-      if (needsPhoneFor.length) return { created: false, needsPhoneFor, hint: 'Ask the organizer privately for these phone numbers before starting the whole plan.' };
+      if (needsPhoneFor.length) return { created: false, needsPhoneFor,
+        ...await requestDraftContacts(ctx, a, `Please send phone numbers for ${needsPhoneFor.join(', ')} so I can invite them.`),
+        hint: 'Use the private contact reply to resume this draft, preserving the original group.',
+      };
       for (const contact of contacts) await assertSuppliedPhone(ctx, contact.matches[0]!.phone);
       const [me] = await ctx.db.select({ city: user.city }).from(user).where(eq(user.id, ctx.actor.userId));
       const city = parseCity(me?.city);
       if (!city) return { created: false, error: 'Organizer has no city on file; ask where the outing should be.' };
       const window = a.windowStartAt && a.windowEndAt ? { startAt: a.windowStartAt, endAt: a.windowEndAt } : null;
       return ctx.db.transaction(async tx => {
+        if (a.draftId) {
+          const [draft] = await tx.select().from(planningDrafts).where(and(eq(planningDrafts.id, a.draftId), eq(planningDrafts.organizerUserId, ctx.actor.userId))).for('update');
+          if (!draft) throw new AppError('NOT_FOUND', 'Pending request not found.');
+          if (draft.planId) return { created: true, planId: draft.planId, alreadyResumed: true };
+        }
         const { plan } = await createPlan(tx, ctx.actor, { request: a.request, templateId: a.kind, city, window, participantUserIds: r.matched.map(m => m.userId) });
         for (const contact of contacts) await inviteByPhone(tx, ctx.actor, { name: contact.name, phone: contact.matches[0]!.phone, context: a.request, planId: plan.id });
-        await linkConversation(tx, plan.id, ctx.conversation, ctx.actor.userId);
+        await linkConversation(tx, plan.id, origin, ctx.actor.userId);
+        if (origin.id !== ctx.conversation.id) await linkConversation(tx, plan.id, ctx.conversation, ctx.actor.userId);
+        if (a.draftId) await tx.update(planningDrafts).set({ planId: plan.id, updatedAt: new Date() }).where(and(eq(planningDrafts.id, a.draftId), eq(planningDrafts.organizerUserId, ctx.actor.userId)));
         const [updated] = await tx.select().from(plans).where(eq(plans.id, plan.id));
         ctx.planId = plan.id;
         return { created: true, planId: plan.id, status: updated!.status, participants: r.matched.map(m => m.name), pendingConnections: contacts.length };
@@ -311,13 +357,14 @@ export const TOOLS = [
   }),
   tool({
     name: 'ask_private_question',
-    description: 'Privately ask one plan participant a short question (group conversations only).',
+    description: 'Privately ask one plan participant a short question (group conversations only). Before a plan exists, only ask the requesting organizer (the sender) privately.',
     args: z.object({ userId: z.string(), question: z.string().min(3).max(400) }),
     async run(ctx, a) {
       if (ctx.conversation.kind !== 'group') throw new AppError('FORBIDDEN', 'Only from a group conversation');
-      const planId = needPlan(ctx);
-      await assertMember(ctx.db, planId, a.userId);
-      await enqueueMessage(ctx.db, { recipient: { kind: 'private', userId: a.userId }, text: a.question, effectKey: `ask:${ctx.messageId}:${a.userId}`, planId });
+      const planId = ctx.planId;
+      if (planId) await assertMember(ctx.db, planId, a.userId);
+      else if (a.userId !== ctx.actor.userId) throw new AppError('FORBIDDEN', 'Before a plan exists, only privately ask the requesting organizer.');
+      await ctx.db.transaction(tx => enqueueMessage(tx, { recipient: { kind: 'private', userId: a.userId }, text: a.question, effectKey: `ask:${ctx.messageId}:${a.userId}`, planId }));
       return { sent: true };
     },
   }),

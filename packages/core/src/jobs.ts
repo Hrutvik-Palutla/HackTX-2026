@@ -12,7 +12,7 @@ const SERIAL_KINDS = ['process_inbound', 'plan', 'repair', 'handle_change'];
 /** Insert a job; a repeated dedupeKey is a no-op (webhook retries, double clicks). Returns true if new. */
 export async function enqueue(
   db: Db,
-  job: { kind: JobKind; dedupeKey: string; payload?: unknown; planId?: string | null; runAfter?: Date; maxAttempts?: number },
+  job: { kind: JobKind; dedupeKey: string; payload?: unknown; planId?: string | null; conversationId?: string | null; runAfter?: Date; maxAttempts?: number },
 ): Promise<boolean> {
   const rows = await db
     .insert(jobs)
@@ -21,6 +21,7 @@ export async function enqueue(
       dedupeKey: job.dedupeKey,
       payload: job.payload ?? {},
       planId: job.planId ?? null,
+      conversationId: job.conversationId ?? null,
       runAfter: job.runAfter ?? new Date(),
       maxAttempts: job.maxAttempts ?? 5,
     })
@@ -31,27 +32,51 @@ export async function enqueue(
 
 /** Claim one runnable job (queued, or running with an expired lease). */
 export async function claim(db: Db, workerId: string, leaseMs = 90_000, kinds?: JobKind[]): Promise<Job | null> {
+  if (kinds && !kinds.length) return null;
   const kindFilter = kinds?.length ? sql`and j.kind in ${kinds}` : sql``;
-  const res = await db.execute(sql`
-    update jobs set state = 'running', leased_by = ${workerId}, attempts = attempts + 1,
-      lease_until = now() + (${leaseMs} * interval '1 millisecond'), updated_at = now()
-    where id = (
+  return db.transaction(async tx => {
+    const res = await tx.execute(sql`
       select j.id from jobs j
       where ((j.state = 'queued' and j.run_after <= now())
           or (j.state = 'running' and j.lease_until < now() and j.attempts < j.max_attempts))
         ${kindFilter}
-        and not (j.kind in ${SERIAL_KINDS} and j.plan_id is not null and exists (
-          select 1 from jobs r where r.plan_id = j.plan_id and r.id <> j.id and r.state = 'running'
-            and r.lease_until >= now() and r.kind in ${SERIAL_KINDS}))
-      order by j.run_after
-      limit 1
-      for update skip locked
-    )
-    returning id`);
-  const id = (res as unknown as { rows: { id: string }[] }).rows[0]?.id;
-  if (!id) return null;
-  const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
-  return job ?? null;
+        and not (j.kind in ${SERIAL_KINDS} and exists (
+          select 1 from jobs r where r.id<>j.id and r.kind in ${SERIAL_KINDS}
+          and ((j.plan_id is not null and r.plan_id=j.plan_id) or (j.conversation_id is not null and r.conversation_id=j.conversation_id))
+          and ((r.state='running' and r.lease_until>=now())
+            or (j.conversation_id is not null and r.conversation_id=j.conversation_id and r.state='queued'
+              and (r.created_at<j.created_at or (r.created_at=j.created_at and r.id<j.id))))))
+      order by j.run_after, j.created_at, j.id limit 16 for update skip locked`);
+    for (const { id } of (res as unknown as { rows: { id: string }[] }).rows) {
+      const [job] = await tx.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) continue;
+      if (SERIAL_KINDS.includes(job.kind)) {
+        // Lock the scope before checking leases in a fresh statement. Two concurrent
+        // claimers cannot both pass a snapshot-based NOT EXISTS test for one chat.
+        if (job.conversationId) {
+          const locked = await tx.execute(sql`select id from conversations where id=${job.conversationId} for update skip locked`);
+          if (!(locked as unknown as { rows: unknown[] }).rows.length) continue;
+        }
+        if (job.planId) {
+          const locked = await tx.execute(sql`select id from plans where id=${job.planId} for update skip locked`);
+          if (!(locked as unknown as { rows: unknown[] }).rows.length) continue;
+        }
+        const busy = await tx.execute(sql`select id from jobs r where r.id<>${job.id}
+          and r.kind in ${SERIAL_KINDS}
+          and ((${job.planId}::uuid is not null and r.plan_id=${job.planId})
+            or (${job.conversationId}::uuid is not null and r.conversation_id=${job.conversationId}))
+          and ((r.state='running' and r.lease_until>=now())
+            or (${job.conversationId}::uuid is not null and r.conversation_id=${job.conversationId} and r.state='queued'
+              and (r.created_at<${job.createdAt} or (r.created_at=${job.createdAt} and r.id<${job.id})))) limit 1`);
+        if ((busy as unknown as { rows: unknown[] }).rows.length) continue;
+      }
+      const [claimed] = await tx.update(jobs).set({ state: 'running', leasedBy: workerId,
+        attempts: sql`${jobs.attempts}+1`, leaseUntil: new Date(Date.now() + leaseMs), updatedAt: new Date(),
+      }).where(eq(jobs.id, job.id)).returning();
+      return claimed ?? null;
+    }
+    return null;
+  });
 }
 
 export async function heartbeat(db: Db, job: Job, leaseMs = 90_000) {
