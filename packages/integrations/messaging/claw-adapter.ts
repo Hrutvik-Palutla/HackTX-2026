@@ -227,10 +227,16 @@ export function createPublishPollHandler(): Handler {
 export async function startClawMessenger(opts: { db: Db; env?: NodeJS.ProcessEnv; log?: (m: string) => void }) {
   const env = opts.env ?? process.env;
   const apiKey = env.CLAW_MESSENGER_API_KEY;
+  const log = opts.log ?? ((m: string) => console.log(m));
+  // Claw allows several WebSocket consumers per account. Never let a local worker that
+  // happens to have production credentials compete with the designated hosted listener.
+  if (env.CLAW_LISTENER_ENABLED !== 'true') {
+    if (apiKey) log('[claw] listener disabled; set CLAW_LISTENER_ENABLED=true only for the designated listener');
+    return null;
+  }
   // Claw chooses the provider's sender. This is a local routing namespace, not an outbound `from` field.
   const sendingLine = env.CLAW_MESSENGER_FROM_PHONE || 'claw-default';
   if (!apiKey) return null;
-  const log = opts.log ?? ((m: string) => console.log(m));
 
   // Replay anything received while we were offline; ingestion dedupes by message ID.
   const [last] = await opts.db.select({ at: max(inboundEvents.receivedAt) }).from(inboundEvents).where(eq(inboundEvents.provider, CLAW_PROVIDER));

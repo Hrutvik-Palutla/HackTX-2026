@@ -20,12 +20,12 @@ Text notes, manual availability, web chat, and ICS calendar downloads remain ava
 ## Run locally
 
 Use Node **24.22.1** and pnpm **10.34.8**. Copy the privately supplied `.env.team` to `.env`, or fill the placeholders in `.env.example`. Real keys and the team file are Git-ignored.
-Web dev/start and the worker automatically load the root `.env` and optional `.env.local`; externally supplied environment variables retain precedence.
+Web dev/start and the worker automatically load the root `.env` and optional `.env.local`; externally supplied environment variables retain precedence. Local workers do not open the production Claw listener. The hosted worker is the sole production listener. For a real local iMessage run, `live-agent.ts` requires a separate Claw account, `CLAW_DEV_MESSENGER_API_KEY`, `CLAW_DEV_MESSENGER_FROM_PHONE`, and `LIVE_AGENT_ALLOW_CLAW_LISTENER=true`; another API key in the production Claw account is not isolated.
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm dev
-# Separate terminal, same environment:
+# Separate terminal, same environment. Claw listening stays disabled locally by default:
 pnpm worker
 ```
 

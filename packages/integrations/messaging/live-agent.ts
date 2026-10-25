@@ -5,7 +5,8 @@
 // Team accounts come from `.env.team.json` (git-ignored by the `.env.*` rule), all mutually connected friends:
 //   [{ "name": "Sid", "phone": "+15125550100" }, { "name": "Mark", "phone": "+15125550101" }]
 // Local state persists across restarts in .sidequest/live-db (override LIVE_AGENT_DB_PATH).
-// Not used by the deployed app. Stop this harness before testing the production phone line.
+// It must use a separate Claw account and explicit local credentials. Claw allows multiple
+// sockets per account, so reusing production credentials can create competing consumers.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -62,8 +63,19 @@ try { calendar = new GoogleCalendar(db, googleConfig()); } catch { /* GOOGLE_* u
 console.log(`[live] calendar: ${calendar ? 'Google free/busy' : 'disabled (set GOOGLE_* for free/busy)'}`);
 
 const muse = createMuse();
-const claw = await startClawMessenger({ db });
-if (!claw) { console.error('Set CLAW_MESSENGER_API_KEY and CLAW_MESSENGER_FROM_PHONE in .env'); process.exit(1); }
+const localClawKey = process.env.CLAW_DEV_MESSENGER_API_KEY;
+const localSendingLine = process.env.CLAW_DEV_MESSENGER_FROM_PHONE;
+if (!localClawKey || !localSendingLine || process.env.LIVE_AGENT_ALLOW_CLAW_LISTENER !== 'true') {
+  console.error('Local listener blocked. Use a separate Claw account, set CLAW_DEV_MESSENGER_API_KEY and CLAW_DEV_MESSENGER_FROM_PHONE, then explicitly set LIVE_AGENT_ALLOW_CLAW_LISTENER=true.');
+  process.exit(1);
+}
+const claw = await startClawMessenger({ db, env: {
+  ...process.env,
+  CLAW_MESSENGER_API_KEY: localClawKey,
+  CLAW_MESSENGER_FROM_PHONE: localSendingLine,
+  CLAW_LISTENER_ENABLED: 'true',
+} });
+if (!claw) { console.error('Could not start the isolated Claw listener.'); process.exit(1); }
 
 // Payments in local runs: Part 4's real FulfillmentService with an in-memory store and its owned TEST wallet.
 // Real venues have no direct-booking provider, so a quote becomes an honest checkout handoff ("Buyer reports booked").
@@ -100,10 +112,10 @@ configureFulfillment(service);
 console.log(`[live] payments: ${testQuotes ? 'TEST quotes + test wallet (fake money)' : 'checkout handoff (no direct booking)'}`);
 const fulfillment = fulfillmentJobHandlers(p4.createFulfillmentJobHandlers(service));
 
-const handlers = agentHandlers({ fulfillment, db, muse, discovery, calendar, client: claw.client, sendingLine: process.env.CLAW_MESSENGER_FROM_PHONE! });
+const handlers = agentHandlers({ fulfillment, db, muse, discovery, calendar, client: claw.client, sendingLine: localSendingLine });
 let stopping = false;
 process.on('SIGINT', () => { stopping = true; });
-console.log(`[live] revision=${process.env.SOURCE_REVISION ?? 'local'} persistent state enabled; do not run alongside the production worker on the same phone line.`);
+console.log(`[live] revision=${process.env.SOURCE_REVISION ?? 'local'} persistent state enabled; using isolated Claw account and sender.`);
 console.log('[live] agent running; text it or message a group it is in. Ctrl+C to stop.');
 while (!stopping) {
   if (!(await runOne(db, handlers))) await new Promise((r) => setTimeout(r, 500));

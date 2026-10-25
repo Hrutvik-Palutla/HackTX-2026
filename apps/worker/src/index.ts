@@ -36,7 +36,7 @@ if (claw) {
   register('send_outbox', claw.handlers.send_outbox);
   register('publish_poll', claw.handlers.publish_poll);
 } else {
-  console.warn('[worker] messaging disabled: set CLAW_MESSENGER_API_KEY');
+  console.warn('[worker] Claw listener disabled or unconfigured; only the designated production worker should set CLAW_LISTENER_ENABLED=true');
 }
 
 // Part 3: Google Calendar free/busy for planning and own-calendar event writes.

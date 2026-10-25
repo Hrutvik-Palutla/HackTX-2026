@@ -67,6 +67,7 @@ services:
       LINK_CLI_PATH: /opt/sidequest-link/node_modules/.bin/link-cli
       LINK_AUTH_DIRECTORY: /var/lib/sidequest/link-auth
       NODE_ENV: production
+      CLAW_LISTENER_ENABLED: "true"
     volumes:
       - wallet_data:/var/lib/sidequest/link-auth
 volumes:
