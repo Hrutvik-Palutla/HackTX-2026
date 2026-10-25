@@ -3,7 +3,7 @@
 // Claw Messenger has no native polls, so a poll is a text prompt and votes come back as chat replies
 // that Part 2's conversation handler records through its vote tool.
 import { createHash } from 'node:crypto';
-import { and, eq, isNotNull, max } from 'drizzle-orm';
+import { and, eq, isNotNull, max, sql } from 'drizzle-orm';
 import {
   conversations, friendInvites, inboundEvents, messagingIdentities, outbox, plans, user, externalEffects, type Db,
 } from '@hacktx/db';
@@ -57,8 +57,13 @@ export async function ingestClawMessage(db: Db, sendingLine: string, m: ClawInbo
   });
 }
 
+type StoredRecipient = OutboundRecipient | { kind: 'otp_phone'; phoneEnc: string };
+const parseRecipient = (raw: unknown): StoredRecipient =>
+  (raw as { kind?: string })?.kind === 'otp_phone' ? raw as StoredRecipient : OutboundRecipient.parse(raw);
+
 /** Where an outbox recipient is reached on Claw Messenger. */
-async function resolveTarget(db: Db, r: OutboundRecipient): Promise<SendTarget> {
+async function resolveTarget(db: Db, r: StoredRecipient): Promise<SendTarget> {
+  if (r.kind === 'otp_phone') return { to: open('phone', r.phoneEnc) };
   if (r.kind === 'group') {
     const [conv] = await db.select().from(conversations).where(eq(conversations.id, r.conversationId));
     if (!conv || conv.provider !== CLAW_PROVIDER) throw new AppError('UNRESOLVED', 'group conversation is not a Claw Messenger chat');
@@ -86,7 +91,11 @@ async function resolveTarget(db: Db, r: OutboundRecipient): Promise<SendTarget> 
 const setEffect = (db: Db, id: string, state: string, providerRequestId?: string) =>
   db.update(externalEffects).set({ state, ...(providerRequestId ? { providerRequestId } : {}), updatedAt: new Date() }).where(eq(externalEffects.id, id));
 const setOutbox = (db: Db, id: string, status: string, providerMessageId?: string) =>
-  db.update(outbox).set({ status, ...(providerMessageId ? { providerMessageId } : {}), updatedAt: new Date() }).where(eq(outbox.id, id));
+  db.update(outbox).set({
+    status, ...(providerMessageId ? { providerMessageId } : {}), updatedAt: new Date(),
+    // Once a message is final, an expiring body (OTP) is no longer needed: wipe it.
+    ...(status !== 'pending' ? { bodyEnc: sql`case when ${outbox.expiresAt} is not null then null else ${outbox.bodyEnc} end` } : {}),
+  }).where(eq(outbox.id, id));
 
 /**
  * `send_outbox`: deliver one outbox row. The external effect is marked inflight before the send, so a crash or
@@ -106,7 +115,7 @@ export function createSendOutboxHandler(client: Sender): Handler {
       throw new AppError('PROVIDER', `send ${row.effectKey} outcome unknown after an interrupted attempt; not resending`);
     }
 
-    const target = await resolveTarget(db, OutboundRecipient.parse(row.recipient));
+    const target = await resolveTarget(db, parseRecipient(row.recipient));
     const text = row.body ?? open('outbox', row.bodyEnc!);
     await setEffect(db, effect.id, 'inflight');
     let res;
