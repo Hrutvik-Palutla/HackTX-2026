@@ -4,9 +4,9 @@ import { SideQuestLogo } from "./brand";
 import { NavigationIcon } from "./navigation-icon";
 
 export const viewDescriptions: Record<string, string> = {
-  plans: "Your group’s plans, votes and messages.",
-  friends: "Friends who can plan with you.",
-  settings: "Your profile, calendar and account.",
+  plans: "What’s happening, who’s in, and what you’ve earned.",
+  friends: "The people you get out with.",
+  settings: "Your profile, calendar and badges.",
   private: "Notes for Sid that your friends can’t see.",
   payment: "Review your share and payment status.",
   studio: "Edit Sid’s instructions and review what happened.",

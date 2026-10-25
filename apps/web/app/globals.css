@@ -1516,3 +1516,63 @@ details[open] > summary ~ * { animation: fade-up 200ms ease both; }
 }
 .demo-layout > *, .card-builder > *, .photo-draft > *, .demo-split > * { min-width: 0; }
 .card-builder canvas, .photo-draft img { max-width: 100%; }
+
+/* ---------- Badge pop, quest banner, calendar, memories ---------- */
+.badge-pop { display: inline-block; animation: badge-pop 640ms cubic-bezier(0.18, 0.9, 0.28, 1.35) both; }
+.badge-pop + .badge-pop { margin-left: -18px; }
+@keyframes badge-pop { 0% { opacity: 0; transform: translateY(18px) scale(0.4) rotate(-14deg); } 55% { opacity: 1; transform: translateY(-6px) scale(1.12) rotate(4deg); } 100% { transform: none; } }
+.badge-reveal { animation: reveal-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes reveal-in { from { opacity: 0; transform: translateY(16px) scale(0.96); } }
+.badge-strip { display: flex; align-items: center; gap: var(--space-4); max-width: 520px; margin: 0 0 var(--space-6); padding: 10px 16px; border: 1px solid var(--border); transition: border-color 160ms ease; }
+.badge-strip:hover { border-color: var(--gold); }
+.badge-strip-icons { display: flex; }
+.badge-strip-icons .badge-icon + .badge-icon { margin-left: -8px; }
+.badge-strip strong { display: block; font-size: 0.875rem; }
+.badge-strip small { color: var(--muted); font-size: 0.75rem; }
+.quest-banner { display: grid; gap: var(--space-5); }
+.quest-banner-art { display: flex; justify-content: center; margin-bottom: -40px; animation: fade-up 500ms ease both; }
+.quest-banner-art img { width: min(320px, 70vw); height: auto; }
+.quest-hero { font-size: clamp(2rem, 5vw, 2.8rem) !important; margin-bottom: var(--space-3) !important; }
+.demo-actions.is-centered { justify-content: center; }
+.calendar-first { display: flex; gap: var(--space-4); align-items: flex-start; padding: var(--space-4) var(--space-5); margin-bottom: var(--space-4); border: 1px solid var(--gold); background: var(--brand-soft); }
+.calendar-first svg { flex-shrink: 0; width: 48px; height: 48px; fill: none; stroke: var(--ink); stroke-width: 1.8; stroke-linecap: round; }
+.calendar-first .cal-gold { stroke: var(--gold); stroke-width: 2.6; }
+.calendar-first strong { display: block; font-family: var(--display); font-size: 1.35rem; font-weight: 500; }
+.calendar-first p { margin: 2px 0 0; }
+.slot-ask { max-width: 420px; padding: var(--space-5); border: 1px solid var(--border); animation: fade-up 180ms ease both; }
+.slot-ask strong { display: block; font-family: var(--display); font-size: 1.6rem; font-weight: 500; }
+.free-chart { margin: 0 0 var(--space-4); max-width: 560px; }
+.free-chart svg { width: 100%; height: auto; overflow: visible; }
+.free-chart text { font-family: var(--font-body), sans-serif; }
+.free-chart .busy { animation: fade-up 300ms ease both; }
+.free-chart .free-window { animation: fade-up 500ms 250ms ease both; }
+.free-chart figcaption { color: var(--muted); font-size: 0.75rem; margin-top: 6px; }
+.memory-box { margin: 0 0 var(--space-5); padding: var(--space-5); border: 1px solid var(--border); }
+.memory-box h2 { font-family: var(--display); font-size: 1.7rem; font-weight: 500; margin: 2px 0 var(--space-4); }
+.memory-actions, .memory-share { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: var(--space-3); }
+.memory-btn { position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 46px; margin: 0; padding: 8px 16px; border: 1px solid var(--ink); background: var(--ink); color: var(--canvas); font-size: 0.8125rem; font-weight: 500; letter-spacing: 0.02em; cursor: pointer; overflow: hidden; }
+.memory-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.memory-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.memory-btn.is-quiet, .memory-btn.social { background: transparent; color: var(--ink); border-color: var(--border); }
+.memory-btn.social:hover, .memory-btn.is-quiet:hover { border-color: var(--gold); background: var(--brand-soft); }
+.memory-btn:focus-within { outline: 3px solid var(--focus); outline-offset: 3px; }
+.memory-btn.is-recording { background: #8a3a2a; border-color: #8a3a2a; }
+.memory-btn.is-recording svg { animation: rec-pulse 1s ease-in-out infinite; }
+@keyframes rec-pulse { 50% { opacity: 0.35; } }
+.memory-strip { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.memory-strip li { position: relative; animation: badge-pop 420ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+.memory-strip img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border: 1px solid var(--border); }
+.memory-strip li.voice { grid-column: span 2; display: flex; align-items: center; min-height: 64px; padding: 8px; border: 1px solid var(--border); }
+.memory-strip audio { width: 100%; }
+.memory-remove { position: absolute; top: 4px; right: 4px; min-height: 28px; width: 28px; padding: 0; background: #fbfbfae6; color: var(--ink); border: 1px solid var(--border); border-radius: 50%; font-size: 1rem; }
+@media (max-width: 600px) {
+  .memory-btn { flex: 1 1 calc(50% - 10px); justify-content: center; }
+  .calendar-first { flex-direction: column; }
+  .quest-banner-art { margin-bottom: -24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .badge-pop, .badge-reveal, .memory-strip li, .free-chart .busy, .free-chart .free-window { animation: none !important; }
+}
+.options-wrap { margin: 0; border-top: 0; padding-top: 0; }
+.options-wrap:not([open]) { border-top: 1px solid var(--border); padding-top: var(--space-3); margin-bottom: var(--space-4); }
+.badge-reveal { pointer-events: none; } .badge-reveal button { pointer-events: auto; }

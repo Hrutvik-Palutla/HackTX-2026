@@ -2,6 +2,12 @@
 
 Each owner keeps their own section current: status, files, what actually works + the check run, blockers, next action.
 
+## Live badges, memories, calendar-first availability, demo story (October 25)
+
+- Real app: per-account badges (Plus One, Inner Circle, The Instigator, It’s a Date, Full Table, Bridge Builder, Worth Keeping) computed from the signed-in account’s own friends and plans; shown in Settings and as a strip on Current Plans, with a pop-out + soft chime the first time each is earned (seen-state per account in this browser; chime throttled). Agreed plans get a Memories box: photo upload from phone/laptop (resized, EXIF stripped), on-the-spot voice memos (MediaRecorder) or audio upload, Instagram/Facebook buttons. Memories are saved on the device; no server media storage yet. Private details lead with Connect Google Calendar; manual times are one day at a time behind “I’ll add times myself”. Voted options fold away once a plan is agreed. Copy reworded around plans → quests, badges and memories.
+- Demo: opens on a “We’ve got a quest for you” scroll; “Not our thing” reveals optional interests. Calendar step: connect (simulated) with a free-time chart, or answer three yes/no slots. Quest starts unchecked. Memories use the same box as the app.
+- Checks: typecheck, `next build`, Playwright 40/40 (desktop + mobile).
+
 ## Interactive demo, badges and share cards (October 25)
 
 - `/try` (and `/demo`) is a self-contained "Try a group adventure" demo, clearly labeled fictional: optional one-line request + quick chips, editable fact summary, three options with an illustrative map and one-tap votes, refine (cheaper / later / something different), one review surface with a simulated reservation, a quest scroll with five challenges, self-only "We went" confirmations, earlier outings, photo upload from phone/laptop (re-encoded in the browser, EXIF stripped, never uploaded) with a square/portrait share card (Web Share → Instagram/Facebook where supported; download + copy caption otherwise), and a standard next-outing suggestion. Presenter rail sets up any step; Reset replays cleanly.

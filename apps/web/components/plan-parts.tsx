@@ -389,6 +389,7 @@ export function AvailabilityEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  const [manual, setManual] = useState(false);
   const shown = busyDay ? [] : ranges;
   const summary = busyDay
     ? `Not free on ${date}.`
@@ -397,9 +398,21 @@ export function AvailabilityEditor({
     <section className="panel" id="availability" aria-labelledby="availability-title">
       <span className="eyebrow">Only you see this</span>
       <h2 id="availability-title">When you’re free</h2>
+      <div className="calendar-first">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="9" width="36" height="33" rx="3" /><path d="M6 18h36M15 5v8M33 5v8" /><path d="M15 27h6M27 27h6M15 34h6" className="cal-gold" /></svg>
+        <div>
+          <strong>{calendarConnected ? "Google Calendar is connected" : "Let Sid check your calendar"}</strong>
+          <p>{calendarConnected ? "Sid already sees when you’re busy (never what the events are). Add an exception below if needed." : "Sid reads only busy and free times, never event names, and checks every option for you."}</p>
+          <div className="action-row">
+            <a className="button" href="/api/calendar/connect">{calendarConnected ? "Reconnect" : "Connect Google Calendar"}</a>
+            <button type="button" className="secondary" aria-expanded={manual} onClick={() => setManual((v) => !v)}>{manual ? "Hide manual times" : calendarConnected ? "Add an exception" : "I’ll add times myself"}</button>
+          </div>
+        </div>
+      </div>
+      {manual && (
+      <>
       <p>
-        Sid checks options against these times. Friends see whether an option fits everyone, never your hours.
-        Times are in <strong>{timeZone}</strong>.
+        One day at a time. Friends see whether an option fits everyone, never your hours. Times are in <strong>{timeZone}</strong>.
       </p>
       <form
         className="form-panel"
@@ -472,14 +485,10 @@ export function AvailabilityEditor({
         </label>
         {error && <p role="alert">{error}</p>}
         {saved && <p role="status">{saved}</p>}
-        <button disabled={busy}>{busy ? "Saving…" : "Save my times"}</button>
+        <button disabled={busy}>{busy ? "Saving…" : "Save this day"}</button>
       </form>
-      <p className="hint">
-        {calendarConnected ? "Google Calendar connected: Sid also reads your free/busy times (never event titles). " : "Prefer not to type times? "}
-        <a className="back" href="/api/calendar/connect">
-          {calendarConnected ? "Reconnect Google Calendar" : "Connect Google Calendar (optional)"}
-        </a>
-      </p>
+      </>
+      )}
     </section>
   );
 }
