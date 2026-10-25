@@ -1,0 +1,22 @@
+{
+  "name": "muse-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.18.3",
+  "scripts": {
+    "dev": "pnpm --filter @muse/web dev",
+    "build": "pnpm --filter @muse/web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "tsx --test packages/accounts/src/*.test.ts",
+    "test:integration": "tsx --test apps/web/tests/*.integration.test.ts",
+    "accounts:schema": "tsx apps/web/scripts/print-auth-schema.ts",
+    "test:e2e": "playwright test",
+    "deploy:vultr": "bash scripts/deploy-vultr.sh",
+    "vultr:status": "node --env-file-if-exists=.env scripts/vultr-status.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^22.18.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
