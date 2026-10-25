@@ -108,3 +108,55 @@ Each run cost about $0.013–0.016 (estimated). Discovery is still the labeled F
 **CONTRACTS.md updated:** `publish_poll` job kind, `vote_states`, `plans.template_id`, `agent_runs.task`, `PROVIDER`/`INTERNAL` errors, `PUT /plans/:id/private`, `GET`/`POST /plans/:id/messages`.
 
 **Env used by Part 2:** `DATABASE_URL`, `MODEL_API_KEY`, `MUSE_MODEL`, `MUSE_BUDGET_USD`, `APP_ENCRYPTION_KEY`, `APP_BASE_URL`, `TEAM_ADMIN_USER_IDS`, optional `DISCOVERY=fixture`.
+
+## Part 3 — Messaging, Calendar & Deployment — in progress (branch `part3/messaging-calendar-deploy`)
+
+**Provider decision:** iMessage via **Claw Messenger** (hosted, self-serve; agent number +1 205-369-0702). We did not use Linq (it requires a sales consultation), Sendblue/Photon (groups and cold outreach gated on free plans) or Telegram (not iMessage). Claw has **no native polls**: votes are text replies plus the web vote page. Inbound arrives over a WebSocket, not webhooks.
+
+**Live-verified with real phones (October 24):** DM send and receive; agent-created group (send to an array of numbers); send to the group by chat ID; inbound group messages with sender and participants; all iMessage; messages sent while offline are replayed on connect. Check: `pnpm exec tsx --env-file=.env packages/integrations/messaging/claw-spike.ts dm|group <+E164…>`.
+
+**Live-verified with a real Google account:** OAuth consent with free/busy + events.owned scopes on the localhost redirect; primary-calendar free/busy returned real busy blocks (times only). Check: `pnpm exec tsx --env-file=.env packages/integrations/calendar-spike.ts`.
+
+**Works (27 tests, `pnpm exec vitest run --config packages/integrations/vitest.part3.config.ts`; strict typecheck clean; root `pnpm typecheck`/`pnpm test` still pass):**
+- `messaging/claw-messenger.ts`: WebSocket client with keepalive, reconnect/backoff, `sync` replay, and send correlation.
+- `messaging/claw-adapter.ts`:
+  - Inbound goes to `inbound_events` (no text/phones) plus a deduped `process_inbound` job.
+  - `send_outbox` reserves an external effect first, so an ambiguous timeout becomes `unknown` and is never resent. Provider-declined sends retry. Expired rows are dropped. Private messages go only to a verified handle or verified phone.
+  - `publish_poll` posts a text poll via transcript and outbox; obsolete versions are skipped.
+  - `startClawMessenger({db})` is the worker entry point.
+- `messaging/otp.ts`:
+  - `createOtpSender(db)` matches Part 1's `configurePrivateOtpSender` signature. Phone and code are encrypted into the outbox, and the body is wiped after send or expiry.
+  - `linkVerifiedPhone(db, userId, phone)` adds the `messaging_identities` row.
+- `google-calendar.ts`: signed, session- and browser-bound OAuth state; encrypted refresh token; incremental write scope; revoke on disconnect; `invalid_grant` marks the connection `revoked`; free/busy never reports unknown as free; stable-ID own-calendar event upsert; ICS.
+- `calendar-jobs.ts`: `refreshPlanAvailability` (snapshots for every plan member into `availability_snapshots`) and the `sync_calendar` handler.
+- `calendar-http.ts` and route files `apps/web/app/api/calendar/{connect,callback,connection}`, `api/plans/[id]/calendar`, `api/plans/[id]/calendar.ics`: session required, same-origin on mutations, generic 404 for non-members, `no-store`.
+
+**Requests to other parts:**
+- **Part 2:**
+  1. Add `'claw_messenger'` to `InboundMessage.provider`. Until then `handleInbound` rejects Claw messages, which blocks live end-to-end testing.
+  2. Add `{kind:'otp_phone', phoneEnc}` to `OutboundRecipient`. It is stored by `createOtpSender` and handled by our `send_outbox` today.
+  3. Worker wiring:
+     ```ts
+     const claw = await startClawMessenger({ db });
+     if (claw) { register('send_outbox', claw.handlers.send_outbox); register('publish_poll', claw.handlers.publish_poll); }
+     register('sync_calendar', createSyncCalendarHandler(new GoogleCalendar(db, googleConfig())));
+     ```
+  4. Call `refreshPlanAvailability(db, calendar, planId, window)` before feasibility.
+  5. The `process_inbound` job payload stores private message text in plaintext in `jobs`; consider encrypting it.
+  6. The planner can use `createGroup` (send `to: [numbers]`) for the private-request flow, since Claw supports it.
+- **Part 1:**
+  - At startup: `configurePrivateOtpSender(createOtpSender(db))` and `configureCalendar({ db, getUserId })`.
+  - After phone verification: `linkVerifiedPhone`.
+  - The settings page should read `GET /api/calendar/connection` for `calendarConnected`, link to `/api/calendar/connect` (`?write=1` for Add to calendar), and handle `?calendar=connected|declined|invalid|failed` on return.
+  - Note: `main` uses `@muse/*` packages and different friendship column names from Part 2's schema, which needs reconciling in the merge.
+- **Part 4:** `packages/integrations/package.json` now has workspace dependencies (`@hacktx/db`, `core`, `contracts`) and Part 3 exports.
+
+**Env (see `.env.example`):** `MESSAGING_PROVIDER=claw_messenger`, `CLAW_MESSENGER_API_KEY`, `CLAW_MESSENGER_URL`, `CLAW_MESSENGER_FROM_PHONE`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`.
+
+**Next:**
+- Deployment wiring once `main` (web + Caddy + Vultr scripts) and `integration/part2-part4` (worker) merge:
+  - `compose.yaml` on `main` has no **worker** service yet, so nothing would consume jobs or hold the Claw socket. Add one, built from the same image and running `pnpm worker`, with the same env file.
+  - `.env.production` needs the Claw and Google variables.
+  - Google OAuth needs **HTTPS on a real domain** (the `SITE_ADDRESS=:80` IP preview can't be a redirect URI). Add `https://<domain>/api/calendar/callback` in Google Cloud and set `GOOGLE_REDIRECT_URI` to it.
+- Unknown-sender signup prompt.
+- Live OTP delivery check after Part 1 wires the sender.
