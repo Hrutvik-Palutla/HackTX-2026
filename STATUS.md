@@ -2,6 +2,13 @@
 
 Each owner keeps their own section current: status, files, what actually works + the check run, blockers, next action.
 
+## Interactive demo, badges and share cards (October 25)
+
+- `/try` (and `/demo`) is a self-contained "Try a group adventure" demo, clearly labeled fictional: optional one-line request + quick chips, editable fact summary, three options with an illustrative map and one-tap votes, refine (cheaper / later / something different), one review surface with a simulated reservation, a quest scroll with five challenges, self-only "We went" confirmations, earlier outings, photo upload from phone/laptop (re-encoded in the browser, EXIF stripped, never uploaded) with a square/portrait share card (Web Share → Instagram/Facebook where supported; download + copy caption otherwise), and a standard next-outing suggestion. Presenter rail sets up any step; Reset replays cleanly.
+- `components/badges.tsx`: the eight badge rules and SVG medallions from the execution guide; earned/unfinished states with text progress; reveal stamp respects reduced motion. Settings shows the collection.
+- Not done (needs backend + review, not attempted before the deadline): persistent completions/attestations/awards tables, live Plan/Memories/Badges tabs, Gemini adaptation, server media storage, Messages attachments, direct Instagram API publishing. Live badges stay at 0 until completions exist.
+- Checks: typecheck, `next build`, Playwright 40/40 on a production build (desktop + mobile), including a demo test asserting zero `/api` requests and no duplicate awards across reset.
+
 ## Illustrations with people + homepage day layout (October 25)
 
 - `apps/web/illustrations/kit/figure.mjs` (new): turned-wood figurines (lathe torso, ball head, tube limbs), a typing-dots bubble, and shared motion CSS (reduced-motion safe). Dinner table: four diners mid-conversation (storyteller with a raised hand and animated typing bubble, one laughing, one reaching for wine, one chin-on-hand). Canoe: three paddlers mid-stroke with blades, ripples and slow wake lines (its old label promised paddlers that were never drawn). Movie camera: reels turn via six honest rotation frames. Record player: notes drift up. Rebuild with `node apps/web/illustrations/<name>/build.mjs`.
