@@ -2,6 +2,12 @@ name: Diagnose production Muse requests
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Synthetic diagnostic to run
+        type: choice
+        options: [model, network]
+        default: model
 
 permissions:
   contents: read
@@ -18,14 +24,20 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.VULTR_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.VULTR_KNOWN_HOSTS }}
           MODEL_SECRET: ${{ secrets.SIDEQUEST_MODEL_API_KEY }}
+          DIAGNOSTIC_MODE: ${{ inputs.mode }}
         run: |
           umask 077
           mkdir -p "$HOME/.ssh"
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/diagnostic-key"
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           expected_hash=$(printf '%s' "$MODEL_SECRET" | sha256sum | cut -d' ' -f1)
+          probe_script=scripts/diagnose-muse.mjs
+          if [[ "$DIAGNOSTIC_MODE" == network ]]; then
+            probe_script=scripts/diagnose-muse-network.mjs
+            MODEL_API_KEY="$MODEL_SECRET" node "$probe_script"
+          fi
           ssh -i "$RUNNER_TEMP/diagnostic-key" -o BatchMode=yes -o StrictHostKeyChecking=yes "root@$DEPLOY_HOST" 'docker inspect --format "worker image revision: {{index .Config.Labels \"org.opencontainers.image.revision\"}}" sidequest-worker-1'
-          scp -i "$RUNNER_TEMP/diagnostic-key" -o BatchMode=yes -o StrictHostKeyChecking=yes scripts/diagnose-muse.mjs "root@$DEPLOY_HOST:/opt/sidequest/diagnose-muse.mjs"
+          scp -i "$RUNNER_TEMP/diagnostic-key" -o BatchMode=yes -o StrictHostKeyChecking=yes "$probe_script" "root@$DEPLOY_HOST:/opt/sidequest/diagnose-muse.mjs"
           ssh -i "$RUNNER_TEMP/diagnostic-key" -o BatchMode=yes -o StrictHostKeyChecking=yes "root@$DEPLOY_HOST" "docker exec -i -w /app sidequest-worker-1 node --import=tsx --input-type=module - '$expected_hash' < /opt/sidequest/diagnose-muse.mjs"
       - name: Remove temporary SSH key
         if: always()
