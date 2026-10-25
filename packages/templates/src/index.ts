@@ -1,6 +1,8 @@
 // Versioned agent templates (Northmark "platform behind the agent"): same runner, tools, and run records;
 // only instructions, allowed tools, and limits differ. Bump `version` on any change so runs stay attributable.
 import { AgentTemplate } from '@hacktx/contracts';
+import { agentTemplates, type Db } from '@hacktx/db';
+import { desc, eq } from 'drizzle-orm';
 
 const CONVERSATION_TOOLS = [
   'start_plan', 'read_plan', 'record_availability', 'record_spending_limit', 'record_preference',
@@ -42,6 +44,21 @@ real prices allow, but timing and experience differences can matter more than pr
     limits: { maxTurns: 8, maxTools: 16, maxSearches: 8 },
     outputSchemaVersion: 1,
   }),
+  'drop-extraction': AgentTemplate.parse({
+    id: 'drop-extraction', version: 1, model, outputSchemaVersion: 1,
+    systemInstruction: `${SHARED}\nExtract interests and things the writer wants to try. Every evidence quote must be copied exactly from the submitted text. Do not treat a URL as a fetched webpage. Return suggestions, never claim the user confirmed them.`,
+    allowedTools: ['extract_interests', 'describe_photo', 'transcribe_voice'], limits: { maxTurns: 1, maxTools: 0, maxSearches: 0 },
+  }),
+  'common-ground': AgentTemplate.parse({
+    id: 'common-ground', version: 1, model, outputSchemaVersion: 1,
+    systemInstruction: `${SHARED}\nFind an interesting shared experience for this group from the supplied confirmed interests only. Cite chip IDs from at least two people. Produce a specific local search query; do not invent an event or venue.`,
+    allowedTools: ['match_shared_interests'], limits: { maxTurns: 1, maxTools: 0, maxSearches: 0 },
+  }),
+  quest: AgentTemplate.parse({
+    id: 'quest', version: 1, model, outputSchemaVersion: 1,
+    systemInstruction: `${SHARED}\nCreate exactly three cooperative photo challenges and two riddles for the selected outing. Use only supplied venue facts and shared interests. Keep challenges safe, free, accessible to adapt, and respectful of strangers; never require photographing strangers or entering restricted areas.`,
+    allowedTools: ['create_quest', 'create_quest_art'], limits: { maxTurns: 1, maxTools: 0, maxSearches: 0 },
+  }),
 } satisfies Record<AgentTemplate['id'], AgentTemplate>;
 
 export type TemplateId = keyof typeof templates;
@@ -50,3 +67,19 @@ export const getTemplate = (id: string): AgentTemplate => {
   if (!t) throw new Error(`Unknown template ${id}`);
   return t;
 };
+
+export async function loadTemplate(db: Db, id: string): Promise<AgentTemplate> {
+  const [row] = await db.select().from(agentTemplates).where(eq(agentTemplates.id, id)).orderBy(desc(agentTemplates.version)).limit(1);
+  return row ? AgentTemplate.parse(row.config) : getTemplate(id);
+}
+
+export async function saveTemplate(db: Db, id: string, expectedVersion: number, patch: Pick<AgentTemplate, 'systemInstruction' | 'allowedTools' | 'limits'>) {
+  const current = await loadTemplate(db, id);
+  if (current.version !== expectedVersion) throw new Error('STALE_TEMPLATE');
+  const base = getTemplate(id);
+  if (!patch.systemInstruction.trim() || patch.systemInstruction.length > 12000 || patch.allowedTools.some(t => !base.allowedTools.includes(t)) || patch.limits.maxTurns > 12 || patch.limits.maxTools > 24 || patch.limits.maxSearches > 8) throw new Error('INVALID_TEMPLATE');
+  const next = AgentTemplate.parse({ ...current, ...patch, version: current.version + 1 });
+  const rows = await db.insert(agentTemplates).values({ id, version: next.version, config: next }).onConflictDoNothing().returning();
+  if (!rows.length) throw new Error('STALE_TEMPLATE');
+  return next;
+}

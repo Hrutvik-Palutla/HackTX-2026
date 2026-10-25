@@ -274,7 +274,7 @@ export type JobKind = z.infer<typeof JobKind>;
 
 // ---------- templates / runs ----------
 export const AgentTemplate = z.object({
-  id: z.enum(['movie-night', 'local-outing']),
+  id: z.enum(['movie-night', 'local-outing', 'drop-extraction', 'common-ground', 'quest']),
   version: z.number().int().positive(),
   model: z.string(),
   systemInstruction: z.string(),

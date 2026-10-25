@@ -6,7 +6,7 @@ import { and, desc, eq, inArray, ne, or } from 'drizzle-orm';
 import { conversations, messages, messagingIdentities, planParticipants, plans, user, type Db } from '@hacktx/db';
 import { InboundMessage, type ActorContext } from '@hacktx/contracts';
 import { AGENT_HANDLE, AppError, activeTally, listOwnFacts, open, postToConversation, publicPlan, seal } from '@hacktx/core';
-import { getTemplate } from '@hacktx/templates';
+import { loadTemplate } from '@hacktx/templates';
 import type { ChatMessage, Muse } from './muse';
 import { LimitError, RunRecorder } from './recorder';
 import { toolsFor, type ToolCtx } from './tools';
@@ -76,7 +76,7 @@ async function converse(
     planId = p?.id ?? null;
   }
   const [plan] = planId ? await db.select().from(plans).where(eq(plans.id, planId)) : [];
-  const template = getTemplate(plan?.templateId ?? 'local-outing');
+  const template = await loadTemplate(db, plan?.templateId ?? 'local-outing');
 
   // Context: only what this audience may see. The agent's own earlier messages are part of the transcript.
   const history = await db.select().from(messages).where(eq(messages.conversationId, conv.id)).orderBy(desc(messages.occurredAt)).limit(HISTORY);

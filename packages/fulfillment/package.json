@@ -6,7 +6,10 @@
   "exports": {
     ".": "./src/index.ts",
     "./types": "./src/types.ts",
-    "./http": "./src/http.ts"
+    "./http": "./src/http.ts",
+    "./service": "./src/service.ts",
+    "./errors": "./src/errors.ts",
+    "./postgres": "./src/postgres-repository.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts ../discovery/test/*.test.ts ../integrations/link-wallet.test.ts ../../apps/booking-worker/*.test.ts",
@@ -21,5 +24,7 @@
     "@types/node": "^22.0.0",
     "typescript": "~5.9.3"
   },
-  "engines": { "node": ">=22.18.0" }
+  "engines": {
+    "node": ">=22.18.0"
+  }
 }

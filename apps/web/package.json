@@ -19,7 +19,8 @@
     "@hacktx/db": "workspace:*",
     "@hacktx/core": "workspace:*",
     "@hacktx/fulfillment": "workspace:*",
-    "@hacktx/integrations": "workspace:*"
+    "@hacktx/integrations": "workspace:*",
+    "drizzle-orm": "0.45.4"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

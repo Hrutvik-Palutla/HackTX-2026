@@ -1,4 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
+test.beforeEach(async ({ page }) => {
+  await page.route(/\/api\/plans\/[^/]+\/(quest|common-ground)$/, route => route.fulfill({ json: { data: null } }));
+});
 const city = {
   label: "Austin, Texas, United States",
   countryCode: "US",
@@ -387,7 +390,7 @@ test("Studio uses canonical templates and shows only the redacted execution reco
             id: "movie-night",
             version: 1,
             model: "muse",
-            systemInstruction: "not-for-display",
+            systemInstruction: "Editable recipe instructions",
             allowedTools: ["search"],
             limits: { maxTurns: 4, maxTools: 8, maxSearches: 3 },
             outputSchemaVersion: 1,
@@ -428,13 +431,14 @@ test("Studio uses canonical templates and shows only the redacted execution reco
   );
   await page.goto("/studio");
   await expect(
-    page.getByRole("heading", { name: "movie-night · v1" }),
+    page.locator('summary').filter({ hasText: 'movie-night · version 1' }),
   ).toBeVisible();
   await page.getByText("Execution record (1 steps)").click();
   await expect(
     page.getByText("Three public options passed validation."),
   ).toBeVisible();
-  await expect(page.getByText("not-for-display")).toHaveCount(0);
+  await page.locator('summary').filter({ hasText: 'movie-night · version 1' }).click();
+  await expect(page.getByRole('textbox', { name: 'Instructions', exact: true })).toHaveValue('Editable recipe instructions');
   await expect(page.getByText("private-input-must-not-be-shown")).toHaveCount(
     0,
   );

@@ -55,13 +55,13 @@ export async function listOwnFacts(db: Db, actor: ActorContext, planId: string):
   const rows = await db.select().from(privateFacts).where(and(
     eq(privateFacts.ownerUserId, actor.userId), eq(privateFacts.planId, planId), isNull(privateFacts.supersededBy),
   ));
-  return rows.map(toFact);
+  return rows.filter(r => ['availability', 'spending_limit', 'preference', 'requirement'].includes(r.kind)).map(toFact);
 }
 
 /** Server-only: all current facts for a plan's members, for deterministic checks. Never return to clients/prompts. */
 export async function loadFactsForFeasibility(db: Db, planId: string): Promise<PrivateFact[]> {
   const rows = await db.select().from(privateFacts).where(and(eq(privateFacts.planId, planId), isNull(privateFacts.supersededBy)));
-  return rows.map(toFact);
+  return rows.filter(r => ['availability', 'spending_limit', 'preference', 'requirement'].includes(r.kind)).map(toFact);
 }
 
 /** Combine calendar free/busy snapshots and explicit chat statements into per-member busy data. */

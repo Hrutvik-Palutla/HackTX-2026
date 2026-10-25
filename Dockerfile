@@ -11,12 +11,14 @@ RUN NEXT_STANDALONE=1 pnpm --filter @muse/web build
 
 FROM build AS worker
 ARG SOURCE_REVISION=local
+ENV SOURCE_REVISION=$SOURCE_REVISION
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 USER node
 CMD ["node", "--import=tsx", "apps/worker/src/index.ts"]
 
 FROM node:24.22.1-bookworm-slim AS runtime
 ARG SOURCE_REVISION=local
+ENV SOURCE_REVISION=$SOURCE_REVISION
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000

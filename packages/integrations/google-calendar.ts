@@ -226,13 +226,20 @@ export class GoogleCalendar implements CalendarPort {
 
   /** Create or update this plan's event in the user's own primary calendar (stable ID, so no duplicates). */
   async upsertOwnEvent(userId: string, planId: string, versionId: string): Promise<{ eventId: string }> {
+    if (!(await isPlanMember(this.db, planId, userId))) throw new AppError('NOT_FOUND', 'Not found');
     const found = await outingEvent(this.db, planId);
     if (!found) throw new AppError('UNRESOLVED', 'Plan has no selected option yet');
+    if (found.versionId !== versionId) throw new AppError('STALE_PLAN', 'The selected outing changed. Reload before adding it to your calendar.');
     const { canWriteEvents } = await connectionStatus(this.db, userId);
     const token = canWriteEvents ? await accessToken(this.db, this.cfg, userId, this.f) : null;
     if (!token) throw new AppError('UNRESOLVED', 'Calendar write access is not connected');
     const id = eventIdFor(planId, userId);
     const e = found.event;
+    const [existing] = await this.db.select().from(calendarEvents).where(and(eq(calendarEvents.planId, planId), eq(calendarEvents.userId, userId)));
+    if (existing?.versionId === versionId && existing.syncStatus === 'synced' && existing.providerEventId) return { eventId: existing.providerEventId };
+    const availability = await this.getBusy(userId, { startAt: e.startAt, endAt: e.endAt });
+    if (availability.status !== 'ok') throw new AppError('UNRESOLVED', 'Calendar availability could not be rechecked. Download the calendar file and review the time.');
+    if (availability.busy.some(b => Date.parse(b.startAt) < Date.parse(e.endAt) && Date.parse(b.endAt) > Date.parse(e.startAt))) throw new AppError('UNRESOLVED', 'Your calendar now has a conflict. Review the time or update the plan first.');
     const body = JSON.stringify({
       id, summary: e.title, description: e.description, ...(e.location ? { location: e.location } : {}),
       start: { dateTime: e.startAt, timeZone: e.timeZone }, end: { dateTime: e.endAt, timeZone: e.timeZone },

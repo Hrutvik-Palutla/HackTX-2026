@@ -307,6 +307,11 @@ export class FulfillmentService {
       const ids = new Set(bookings.map(b => b.id));
       const rows = Object.values(s.reimbursements).filter(r => ids.has(r.bookingId));
       if (actor.userId === plan.buyerUserId) return {
+        viewerUserId: actor.userId, buyerUserId: plan.buyerUserId,
+        ownShare: rows.find(r => r.payerUserId === actor.userId) ?? null,
+        buyerLedger: rows.filter(r => r.recipientUserId === actor.userId),
+        booking: bookings.at(-1) ?? null,
+        quote: Object.values(s.quotes).filter(q => q.quote.planId === planId && q.quote.buyerUserId === actor.userId).at(-1)?.quote ?? null,
         role: 'buyer', mode: plan.mode, bookings,
         quotes: Object.values(s.quotes).filter(q => q.quote.planId === planId && q.quote.buyerUserId === actor.userId).map(q => q.quote),
         authorizations: Object.values(s.authorizations).filter(a => s.quotes[a.quoteId]?.quote.planId === planId && a.buyerUserId === actor.userId).map(({ requestedBindingHash: _private, ...value }) => value),
@@ -314,7 +319,7 @@ export class FulfillmentService {
         handoffUrl: safeMerchantUrl(plan.candidate.bookingUrl),
         repaymentNeedsReview: bookings.filter(b => SUCCESS.has(b.status) && (b.attendeeUserIds ?? plan.attendeeUserIds).some(id => id !== actor.userId) && !rows.some(r => r.bookingId === b.id)).map(b => b.id),
       };
-      return { role: 'attendee', mode: plan.mode, reimbursements: rows.filter(r => r.payerUserId === actor.userId), bookingStatus: bookings.map(b => ({ id: b.id, status: b.status, mode: b.mode })) };
+      return { viewerUserId: actor.userId, buyerUserId: plan.buyerUserId, ownShare: rows.find(r => r.payerUserId === actor.userId) ?? null, booking: bookings.length ? { status: bookings.at(-1)!.status, mode: bookings.at(-1)!.mode, actualTotal: null } : null, role: 'attendee', mode: plan.mode, reimbursements: rows.filter(r => r.payerUserId === actor.userId), bookingStatus: bookings.map(b => ({ id: b.id, status: b.status, mode: b.mode })) };
     });
   }
 

@@ -172,8 +172,9 @@ export function createPublishPollHandler(): Handler {
 export async function startClawMessenger(opts: { db: Db; env?: NodeJS.ProcessEnv; log?: (m: string) => void }) {
   const env = opts.env ?? process.env;
   const apiKey = env.CLAW_MESSENGER_API_KEY;
-  const sendingLine = env.CLAW_MESSENGER_FROM_PHONE;
-  if (!apiKey || !sendingLine) return null;
+  // Claw chooses the provider's sender. This is a local routing namespace, not an outbound `from` field.
+  const sendingLine = env.CLAW_MESSENGER_FROM_PHONE || 'claw-default';
+  if (!apiKey) return null;
   const log = opts.log ?? ((m: string) => console.log(m));
 
   // Replay anything received while we were offline; ingestion dedupes by message ID.

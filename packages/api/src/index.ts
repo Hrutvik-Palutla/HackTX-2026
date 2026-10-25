@@ -5,18 +5,26 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { asc, desc, eq, inArray } from 'drizzle-orm';
-import { agentRuns, messages, runSteps, user, type Db } from '@hacktx/db';
+import { agentRuns, messages, runSteps, user, plans, planDecisions, type Db } from '@hacktx/db';
 import { City, Interval, PrivateFactValue, type ActorContext } from '@hacktx/contracts';
 import {
   AGENT_HANDLE, AppError, activeTally, assertMember, closePlan, parseCity, enqueue, open, seal, webConversation, createPlan, listOwnFacts, listPlans, publicPlan, recordDecision, recordVote,
   savePrivateFact, updateParticipants,
 } from '@hacktx/core';
-import { templates } from '@hacktx/templates';
+import { templates, loadTemplate, saveTemplate } from '@hacktx/templates';
+import { createMuse, createDrop, listDrops, editDrop, findCommonGround, getGroundDraft, attachGround, planGround, readQuest, generateQuest, completeQuestChallenge, describePhoto, transcribeVoice, createQuestArt, loadPublicDemo } from '@hacktx/agent';
 
 type Cfg = { db: Db; getUserId(req: Request): Promise<string | null>; appOrigin?: string; teamUserIds?: string[] };
 // Kept on globalThis: Next loads instrumentation and each route bundle as separate module instances.
 const registry = globalThis as typeof globalThis & { hacktxApiCfg?: Cfg };
 export function configureApi(c: Cfg) { registry.hacktxApiCfg = c; }
+export async function getPublicDemo() {
+  try {
+    const cfg = registry.hacktxApiCfg;
+    if (!cfg) return Response.json({ data: null }, { status: 503 });
+    return Response.json({ data: await loadPublicDemo(cfg.db) }, { headers: { 'Cache-Control': 'public, max-age=30' } });
+  } catch { return Response.json({ error: { code: 'UNRESOLVED', message: 'The recorded example is temporarily unavailable.', retryable: true } }, { status: 503 }); }
+}
 
 type Ctx = { req: Request; db: Db; actor: ActorContext; params: Record<string, string>; requestId: string };
 // Matches Next.js route context exactly (its build-time type check rejects an optional second argument).
@@ -60,11 +68,17 @@ export const createPlanRoute = route(async ({ req, db, actor }) => {
     participantUserIds: z.array(z.string()).max(12),
     window: Interval.nullable().default(null),
     mode: z.enum(['live', 'test']).default('test'),
+    commonGroundId: z.string().uuid().optional(),
   }));
   const [me] = await db.select({ city: user.city }).from(user).where(eq(user.id, actor.userId));
   const city = parseCity(me?.city);
   if (!city) throw new AppError('UNRESOLVED', 'Set your city in your profile first');
-  const { plan, missingConnections } = await createPlan(db, actor, { ...b, city });
+  const ground = b.commonGroundId ? await getGroundDraft(db, actor, b.commonGroundId, b.participantUserIds) : null;
+  const { plan, missingConnections } = await db.transaction(async tx => {
+    const result = await createPlan(tx, actor, { ...b, request: ground ? `${ground.theme}. Search: ${ground.searchQuery}` : b.request, city });
+    if (ground) await attachGround(tx, actor, result.plan.id, ground);
+    return result;
+  });
   return { data: { id: plan.id, status: plan.status, missingConnections: missingConnections.length }, revision: plan.inputRevision };
 });
 
@@ -93,6 +107,19 @@ export const postDecision = route(async ({ req, db, actor, params }) => {
   }));
   const r = await recordDecision(db, actor, { ...b, planId: params.id! });
   return { data: { decisionId: r.decision.id, notAttendingUserIds: r.notAttending } };
+});
+export const postBuyer = route(async ({ req, db, actor, params }) => {
+  const input = await body(req, z.object({ expectedRevision: z.number().int() }));
+  return { data: await db.transaction(async tx => {
+    await tx.select({ id: plans.id }).from(plans).where(eq(plans.id, params.id!)).for('update');
+    const plan = await assertMember(tx, params.id!, actor.userId);
+    if (!plan.activeVersionId || !plan.selectedOptionId || plan.inputRevision !== input.expectedRevision || !['selected', 'needs_handoff', 'handoff', 'booked'].includes(plan.status)) throw new AppError('STALE_PLAN', 'Choose the current outing before volunteering for checkout.');
+    const [decision] = await tx.select().from(planDecisions).where(eq(planDecisions.versionId, plan.activeVersionId)).orderBy(desc(planDecisions.recordedAt)).limit(1);
+    if (!decision || !decision.attendeeUserIds.includes(actor.userId)) throw new AppError('FORBIDDEN', 'Only an attendee can volunteer for checkout.');
+    if (decision.buyerUserId && decision.buyerUserId !== actor.userId) throw new AppError('STALE_PLAN', 'Another attendee is already handling checkout.');
+    await tx.update(planDecisions).set({ buyerUserId: actor.userId }).where(eq(planDecisions.id, decision.id));
+    return { buyerUserId: actor.userId };
+  }) };
 });
 
 export const patchParticipants = route(async ({ req, db, actor, params }) => {
@@ -131,10 +158,57 @@ function assertTeam(actor: ActorContext) {
   if (!team.includes(actor.userId)) throw new AppError('NOT_FOUND', 'Not found');
 }
 
-export const getStudioTemplates = route(async ({ actor }) => {
+export const getStudioTemplates = route(async ({ db, actor }) => {
   assertTeam(actor);
-  return { data: Object.values(templates) };
+  return { data: await Promise.all(Object.keys(templates).map(id => loadTemplate(db, id))) };
 });
+
+export const getStudioTemplate = route(async ({ db, actor, params }) => {
+  assertTeam(actor);
+  if (!(params.id! in templates)) throw new AppError('NOT_FOUND', 'Not found');
+  return { data: await loadTemplate(db, params.id!) };
+});
+export const putStudioTemplate = route(async ({ req, db, actor, params }) => {
+  assertTeam(actor);
+  if (!(params.id! in templates)) throw new AppError('NOT_FOUND', 'Not found');
+  const input = await body(req, z.object({ expectedVersion: z.number().int().positive(), systemInstruction: z.string().trim().min(1).max(12000), allowedTools: z.array(z.string()).max(20), limits: z.object({ maxTurns: z.number().int().min(1).max(12), maxTools: z.number().int().min(0).max(24), maxSearches: z.number().int().min(0).max(8) }) }));
+  try { return { data: await saveTemplate(db, params.id!, input.expectedVersion, input) }; }
+  catch (e) { if (e instanceof Error && e.message === 'STALE_TEMPLATE') throw new AppError('STALE_PLAN', 'Recipe changed. Reload before saving.'); if (e instanceof Error && e.message === 'INVALID_TEMPLATE') throw new AppError('INVALID', 'The recipe contains an unsupported tool or limit.'); throw e; }
+});
+
+// Interest suggestions are private until the owner explicitly confirms each shared chip.
+export const getDrops = route(async ({ db, actor }) => ({ data: await listDrops(db, actor.userId) }));
+export const postDrop = route(async ({ req, db, actor }) => {
+  const input = await body(req, z.object({ note: z.string().trim().min(1).max(4000), url: z.string().url().max(2000).nullable().default(null) }));
+  return { data: await createDrop(db, createMuse(), actor.userId, input.note, input.url) };
+});
+export const patchDrop = route(async ({ req, db, actor, params }) => {
+  const input = await body(req, z.object({ chips: z.array(z.object({ id: z.string().uuid(), label: z.string().trim().min(1).max(120), confirmed: z.boolean(), shared: z.boolean() })).max(12) }));
+  return { data: await editDrop(db, actor.userId, params.id!, input.chips) };
+});
+export const deleteDrop = route(async ({ db, actor, params }) => ({ data: await editDrop(db, actor.userId, params.id!, null) }));
+export const postCommonGround = route(async ({ req, db, actor }) => {
+  const input = await body(req, z.object({ friendIds: z.array(z.string()).min(1).max(9) }));
+  return { data: await findCommonGround(db, createMuse(), actor, input.friendIds) };
+});
+export const getPlanGround = route(async ({ db, actor, params }) => { await assertMember(db, params.id!, actor.userId); return { data: await planGround(db, params.id!) }; });
+export const getQuest = route(async ({ db, actor, params }) => ({ data: await readQuest(db, actor, params.id!) }));
+export const postQuest = route(async ({ db, actor, params }) => ({ data: await generateQuest(db, createMuse(), actor, params.id!) }));
+export const patchQuest = route(async ({ req, db, actor, params }) => {
+  const input = await body(req, z.object({ challengeId: z.string().uuid(), done: z.boolean() }));
+  return { data: await completeQuestChallenge(db, actor, params.id!, input.challengeId, input.done) };
+});
+export const postPhotoDescription = route(async ({ req, db, actor }) => {
+  const input = await body(req, z.object({ dataUrl: z.string().max(1_600_000) }));
+  return { data: await describePhoto(db, actor, input.dataUrl) };
+});
+export const postVoiceTranscription = route(async ({ req, db, actor }) => {
+  const form = await req.formData();
+  const file = form.get('audio');
+  if (!(file instanceof Blob)) throw new AppError('INVALID', 'Choose a WAV recording.');
+  return { data: await transcribeVoice(db, actor, file) };
+});
+export const postQuestArt = route(async ({ db, actor, params }) => ({ data: await createQuestArt(db, actor, params.id!) }));
 
 export const getStudioRuns = route(async ({ req, db, actor }) => {
   assertTeam(actor);
@@ -145,7 +219,8 @@ export const getStudioRuns = route(async ({ req, db, actor }) => {
     data: runs.map((r) => ({
       ...r,
       startedAt: r.startedAt.toISOString(),
-      summary: `${r.task} · ${r.templateId} v${r.templateVersion} · ${r.inputTokens + r.outputTokens} tokens · ~$${Number(r.estimatedCostUsd).toFixed(4)}${r.error ? ` · ${r.error}` : ''}`,
+      costKnown: !['voice-input', 'quest-art'].includes(r.task),
+      summary: `${r.task} · ${r.templateId} v${r.templateVersion} · ${r.inputTokens + r.outputTokens} tokens · ${['voice-input', 'quest-art'].includes(r.task) ? 'Provider cost unavailable (excluded from Spark total)' : `~$${Number(r.estimatedCostUsd).toFixed(4)}`}${r.error ? ` · ${r.error}` : ''}`,
       mode: 'test' as const, // no live purchases are made by agent runs
       estimatedCostUsd: Number(r.estimatedCostUsd),
       steps: steps.filter((s) => s.runId === r.id).sort((a, b) => a.index - b.index).map((s) => ({ ...s, estimatedCostUsd: Number(s.estimatedCostUsd) })),

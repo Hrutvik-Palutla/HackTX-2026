@@ -8,7 +8,8 @@ import {
   AppError, WEB, checkSlot, enqueue, enqueueMessage, postToConversation, tally, loadFactsForFeasibility, loadMemberAvailability, publishVersion, setStatus,
   type OptionDraft, type SlotFit,
 } from '@hacktx/core';
-import { getTemplate } from '@hacktx/templates';
+import { loadTemplate } from '@hacktx/templates';
+import { planGround } from './standout';
 import type { Muse } from './muse';
 import { LimitError, RunRecorder } from './recorder';
 
@@ -46,7 +47,7 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
   const [plan] = await db.select().from(plans).where(eq(plans.id, job.planId));
   if (!plan || plan.inputRevision !== job.inputRevision || plan.status !== 'planning') return { status: 'stale' as const };
 
-  const template = getTemplate(plan.templateId);
+  const template = await loadTemplate(db, plan.templateId);
   const rec = await RunRecorder.start(db, { planId: plan.id, task: job.reason ? 'repair' : 'plan', template, model: muse.model, inputRevision: plan.inputRevision });
   try {
     const now = deps.now?.() ?? new Date();
@@ -54,6 +55,7 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
       ? { startAt: plan.windowStart.toISOString(), endAt: plan.windowEnd.toISOString() }
       : { startAt: now.toISOString(), endAt: new Date(now.getTime() + 7 * 86_400_000).toISOString() };
     const city = plan.city as City;
+    const ground = await planGround(db, plan.id);
     if (deps.refreshAvailability) await deps.refreshAvailability(plan.id, window);
 
     // 1. Interpret the request (public request text only).
@@ -70,9 +72,9 @@ export async function runPlanJob(deps: PlannerDeps, job: { planId: string; input
     // 2. Real candidates from Part 4's DiscoveryPort (SerpApi).
     rec.charge('search');
     const found = await rec.step('tool', 'discover_candidates', () =>
-      intent.kind === 'movie' && intent.movieTitle
+      !ground && intent.kind === 'movie' && intent.movieTitle
         ? deps.discovery.searchMovie({ title: intent.movieTitle, city, window })
-        : deps.discovery.searchOutings({ query: intent.searchQuery, city, window }),
+        : deps.discovery.searchOutings({ query: ground?.searchQuery ?? intent.searchQuery, city, window }),
     (r) => ({ summary: `${r.length} candidates`, sourceIds: [...new Set(r.flatMap((c) => c.sourceIds))] }));
     await persistDiscovery(db, deps.discovery, found);
 

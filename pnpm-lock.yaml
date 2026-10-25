@@ -56,6 +56,9 @@ importers:
       better-auth:
         specifier: ^1.3.27
         version: 1.7.12(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@electric-sql/pglite@0.5.11)(@types/pg@8.23.1)(kysely@0.29.7)(pg@8.23.1))(next@15.5.28(@playwright/test@1.64.1)(@types/node@24.19.2)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(pg@8.23.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@5.0.5(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@electric-sql/pglite@0.5.11)(@types/pg@8.23.1)(kysely@0.29.7)(pg@8.23.1)
       motion:
         specifier: ^14.6.0
         version: 14.6.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -136,6 +139,9 @@ importers:
 
   packages/api:
     dependencies:
+      '@hacktx/agent':
+        specifier: workspace:*
+        version: link:../agent
       '@hacktx/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -158,9 +164,6 @@ importers:
       '@electric-sql/pglite':
         specifier: 0.5.11
         version: 0.5.11
-      '@hacktx/agent':
-        specifier: workspace:*
-        version: link:../agent
 
   packages/contracts:
     dependencies:
@@ -235,6 +238,12 @@ importers:
       '@hacktx/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@hacktx/db':
+        specifier: workspace:*
+        version: link:../db
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@electric-sql/pglite@0.5.11)(@types/pg@8.23.1)(kysely@0.29.7)(pg@8.23.1)
 
 packages:
 

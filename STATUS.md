@@ -2,6 +2,16 @@
 
 Each owner keeps their own section current: status, files, what actually works + the check run, blockers, next action.
 
+## Standout integration and release — ready for review (October 25, ~1 a.m. CT)
+
+- **Owner:** integration agent, explicitly authorized to finish, push and deploy. Older sections below are historical handoffs.
+- **Files:** agent `standout.ts` / `media.ts`, API routes, web panels and recorded demo, templates, shared approval/calendar guards, Part 4 handoff wiring, Docker/Compose/CI runtime settings installer. No new schema migration; encrypted internal records reuse `private_facts`.
+- **Working:** owner-confirmed interest drops, grounded common-interest queries feeding SerpApi, fixed-format cooperative quests with persistent completion/recap, editable versioned Studio recipes. Optional Muse photo understanding, real WAV speech transcription and quest image generation all passed live provider checks. Public `/demo` reads only explicitly seeded synthetic, phone-less accounts; real data stays authenticated.
+- **Tiger:** new service initialized with unchanged 41-table baseline and verified TLS. A real Tiger + Muse + SerpApi walkthrough generated three sourced choices, recorded all three synthetic friends' same-version votes, selected an outing, generated five challenges and persisted all simulated completions. No external text, booking or calendar write was made by this harness.
+- **Checks:** root and worker typechecks, Next production build, 35 backend tests (34 together plus the corrected public-demo fixture test), 28 Part 3 tests, 8 account tests and 26 desktop/mobile browser tests passed locally. Part 4: 66/75 passed locally; nine POSIX permission assertions cannot pass on Windows and must pass on Linux CI. Runtime installer has two passing tests. Private `.env.team` is ignored, never committed.
+- **Release next:** source/secret review, push integration branch, require Linux CI, merge into main and verify public web/database/worker deployment. Final live OTP test is authorized only for the designated 202 number. Browser tests mock phone delivery and do not prove actual delivery.
+- **External dependency:** Google OAuth owner must enable Calendar API, authorize `https://getsidequest.tech/api/calendar/callback`, and add consenting test-user emails while the OAuth app is in Testing. Calendar event creation remains unverified until that configuration and consent are complete. Manual availability and ICS remain available.
+
 ## Independent integration/demo review — ready for team handoff (October 24, 2026)
 
 - Inspected `integration/all` at `3a5e1ca` and the local `../SIDEQUEST_STANDOUT_PLAN.md`. Re-ran all three TypeScript checks, Next production build, 28 backend/cross-part tests, 11 messaging tests, and 8 account tests successfully. Part 4's suite and real phone/OAuth journeys were not re-run in this review.

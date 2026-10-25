@@ -133,11 +133,25 @@ describe('free/busy', () => {
 });
 
 describe('events', () => {
-  it('creates the event once, then updates it with the same stable ID', async () => {
+  it('blocks nonmembers, stale versions and a newly conflicting calendar before writing', async () => {
+    const { planId, versionId } = await selectedPlan();
+    const g = fakeGoogle({
+      'POST https://oauth2.googleapis.com/token': tokenOk({ refresh_token: 'rt' }),
+      'POST https://www.googleapis.com/calendar/v3/freeBusy': () => ({ json: { calendars: { primary: { busy: [{ start: '2026-10-31T01:00:00Z', end: '2026-10-31T02:00:00Z' }] } } } }),
+    });
+    await completeConnection(db, cfg, 'u_alex', 'code', g.f);
+    const cal = new GoogleCalendar(db, cfg, g.f);
+    await expect(cal.upsertOwnEvent('u_out', planId, versionId)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(cal.upsertOwnEvent('u_alex', planId, 'stale-version')).rejects.toMatchObject({ code: 'STALE_PLAN' });
+    await expect(cal.upsertOwnEvent('u_alex', planId, versionId)).rejects.toMatchObject({ code: 'UNRESOLVED' });
+    expect(g.calls.some(c => c.url.includes('/events'))).toBe(false);
+  });
+  it('rechecks availability, creates once, and returns the same event on retry', async () => {
     const { planId, versionId } = await selectedPlan();
     let created = false;
     const g = fakeGoogle({
       'POST https://oauth2.googleapis.com/token': tokenOk({ refresh_token: 'rt' }),
+      'POST https://www.googleapis.com/calendar/v3/freeBusy': () => ({ json: { calendars: { primary: { busy: [] } } } }),
       'POST https://www.googleapis.com/calendar/v3/calendars/primary/events': () => (created ? { status: 409, json: {} } : ((created = true), { json: { id: 'x' } })),
       'PUT https://www.googleapis.com/calendar/v3/calendars/primary/events/': () => ({ json: { id: 'x' } }),
     });
@@ -147,7 +161,8 @@ describe('events', () => {
     const b = await cal.upsertOwnEvent('u_alex', planId, versionId);
     expect(a.eventId).toBe(eventIdFor(planId, 'u_alex'));
     expect(b.eventId).toBe(a.eventId);
-    expect(g.calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
+    expect(g.calls.filter((c) => c.method === 'PUT')).toHaveLength(0);
+    expect(g.calls.filter(c => c.url.endsWith('/events'))).toHaveLength(1);
     const posted = JSON.parse(g.calls.find((c) => c.url.endsWith('/events'))!.body);
     expect(posted).toMatchObject({ id: a.eventId, summary: 'Avengers, Alamo Drafthouse; IMAX', start: { timeZone: 'America/Chicago' } });
     expect(posted.description).toContain('TEST plan');

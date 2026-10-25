@@ -25,8 +25,9 @@ compose() { docker compose --project-name sidequest --env-file "$env_file" --pro
 origin=$(python3 -c 'from pathlib import Path; import sys; print(next(line.split("=",1)[1].strip().strip(chr(34)+chr(39)) for line in Path(sys.argv[1]).read_text().splitlines() if line.startswith("APP_BASE_URL=")))' "$env_file")
 [[ $origin =~ ^https?://[A-Za-z0-9][A-Za-z0-9.:/-]*$ ]]
 printf 'Building revision %s while the current container remains running.\n' "$release_id"
+export COMPOSE_PARALLEL_LIMIT=1
 compose "$release_dir" build
-if compose "$release_dir" up -d --no-build --wait --wait-timeout 180 && curl --fail --silent --show-error --max-time 15 --retry 8 --retry-delay 3 --retry-connrefused "$origin/health/live"; then
+if compose "$release_dir" up -d --no-build --wait --wait-timeout 180 && curl --fail --silent --show-error --max-time 15 --retry 8 --retry-delay 3 --retry-connrefused "$origin/health/live" && { [[ ${COMPOSE_PROFILES:-} != live ]] || curl --fail --silent --show-error --max-time 15 --retry 3 --retry-delay 3 "$origin/health/ready"; }; then
  ln -sfnT "$release_dir" /opt/sidequest/current
  printf '%s\n' "$release_id" > /opt/sidequest/deployed-revision
  printf '\nDeployed revision %s\n' "$release_id"

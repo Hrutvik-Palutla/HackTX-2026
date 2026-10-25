@@ -50,6 +50,7 @@ export type Reimbursement = {
   mode: "live" | "test";
 };
 export type PaymentView = {
+  handoffUrl?: string | null;
   viewerUserId: string;
   buyerUserId: string | null;
   quote?: {
@@ -68,6 +69,7 @@ export type PaymentView = {
   buyerLedger?: Reimbursement[];
 };
 export type StudioTemplate = {
+  systemInstruction: string;
   id: string;
   version: number;
   model: string;

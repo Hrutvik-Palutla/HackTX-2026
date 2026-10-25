@@ -11,6 +11,7 @@ import { invalid, stale } from './errors';
  */
 export async function recordVote(db: Db, actor: ActorContext, input: Omit<Vote, 'userId'> & { planId: string }) {
   return db.transaction(async (tx) => {
+    await tx.select({ id: plans.id }).from(plans).where(eq(plans.id, input.planId)).for('update');
     const plan = await assertMember(tx, input.planId, actor.userId);
     const [version] = await tx.select().from(planVersions).where(eq(planVersions.id, input.versionId));
     if (!version || version.planId !== plan.id || plan.activeVersionId !== version.id || version.supersededAt || plan.status !== 'voting') {

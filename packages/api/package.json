@@ -12,10 +12,10 @@
     "@hacktx/db": "workspace:*",
     "@hacktx/templates": "workspace:*",
     "drizzle-orm": "0.45.4",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "@hacktx/agent": "workspace:*"
   },
   "devDependencies": {
-    "@hacktx/agent": "workspace:*",
     "@electric-sql/pglite": "0.5.11"
   }
 }
