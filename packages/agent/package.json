@@ -8,7 +8,7 @@
   },
   "scripts": {
     "smoke": "tsx --env-file-if-exists=../../.env src/smoke.ts",
-    "demo": "tsx --env-file-if-exists=../../.env src/demo.ts"
+    "demo": "tsx --env-file-if-exists=../../.env --env-file-if-exists=../../.env.local src/demo.ts"
   },
   "dependencies": {
     "@hacktx/contracts": "workspace:*",

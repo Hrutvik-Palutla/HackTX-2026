@@ -2,6 +2,14 @@
 
 Each owner keeps their own section current: status, files, what actually works + the check run, blockers, next action.
 
+## Tiger migrations 0001 + 0002 — applied (October 24, 2026)
+
+- Applied `0001_drop_unused_fulfillment_text_source_ids.sql` and `0002_part4_fulfillment_tables.sql` from the local `integration/part2-part4` checkout through Tiger's web SQL editor. The fetched `origin/main` does not yet contain the database package.
+- Confirmed migration 0000's stored checksum matches the repository. All five legacy fulfillment tables were empty, with RLS already disabled. A PGlite dry run of migrations 0000–0002 passed.
+- Applied both unchanged SQL files in one transaction, with locks and guards against changed migration history, legacy-table data, or unexpected RLS. Recorded each file's exact SHA-256 and `_journal.json` timestamp in `drizzle.__drizzle_migrations`.
+- Tiger readback verified **3 migration records / 3 matching hashes**, **40 public base tables**, **7 new fulfillment tables**, **0 legacy tables**, **3 converted text columns**, **8 fulfillment indexes**, and the reimbursement booking/payer unique constraint.
+- Execution record: `../research/setup/tiger-migrations-0001-0002.sql`. Venue Wi-Fi still requires web SQL or a different network for direct Postgres access; no networking or TLS settings were changed.
+
 ## Account setup — database initialized; Meta key blocked (October 24, 2026)
 
 - Generated `APP_ENCRYPTION_KEY` (32 random bytes, base64) in root `.env`; validated its decoded length and verified `.env` is Git-ignored. Do not rotate this key after storing encrypted data.
@@ -56,6 +64,11 @@ Each run cost about $0.013–0.016 (estimated). Discovery is still the labeled F
 - On Windows, 9 of Part 4's 75 tests fail only on the POSIX `0700` auth-vault permission check (Windows can't express it); the rest pass. Expected to pass on the Linux VM.
 - Part 4's live check found **no structured showtimes for a movie today**. The planner now says it found no listed showtimes and won't guess, instead of blaming schedules.
 - For Part 4: `WalletPort.checkConnection` returns `'not_connected'`, while CONTRACTS.md says `'revoked'`. Pick one.
+
+**Verified October 24, late evening:**
+- Tiger migrations 0001/0002: the recorded hashes and timestamps in `drizzle.__drizzle_migrations` (from `research/setup/tiger-migrations-0001-0002.sql`) match the repo files exactly, and all 31 statements were executed verbatim. The readback screenshot shows 3/3 matching records, 40 tables, 7 fulfillment tables, 0 legacy tables, 3 text columns, 8 indexes and 1 unique constraint, which is exactly what the migrations produce.
+- Live SerpApi + live Muse, full journey (`pnpm agent:demo`; key in ignored `.env.local`): 20 real Austin candidates, 15 feasible, three grounded options with source links. The chat vote was recorded as the sender, and a private availability change triggered a repaired version. About $0.015–0.019 per run.
+- **Blocker: app → Tiger TLS.** The Tiger port is reachable from the current network, but the service presents a certificate chain from a private `Timescale Inc / ca.timescale.com` CA. Tiger's docs say certificates come from Google/ZeroSSL, so node-postgres rejects it (`SELF_SIGNED_CERT_IN_CHAIN`). Verification was **not** disabled. Next: get the CA certificate from the Tiger console or support through a trusted channel, then add `sslrootcert=<path>` to `DATABASE_URL`.
 
 **CONTRACTS.md updated:** `publish_poll` job kind, `vote_states`, `plans.template_id`, `agent_runs.task`, `PROVIDER`/`INTERNAL` errors, `PUT /plans/:id/private`, `GET`/`POST /plans/:id/messages`.
 

@@ -154,7 +154,7 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
         used.add(f.c.id);
         drafts.push({
           label: (['A', 'B', 'C'] as const)[drafts.length]!,
-          title: `${f.c.title} at ${f.c.venueName}`.slice(0, 160),
+          title: (f.c.venueName && !f.c.title.includes(f.c.venueName) ? `${f.c.title} at ${f.c.venueName}` : f.c.title).slice(0, 160),
           candidateIds: [f.c.id],
           startAt: slot.startAt,
           endAt: slot.endAt,
