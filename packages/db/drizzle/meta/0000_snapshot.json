@@ -1,5 +1,5 @@
 {
-  "id": "507c5923-6359-4772-9b6d-d1b8c3add86d",
+  "id": "fb0b4301-35ee-4e95-bf2f-9514213b670c",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -14,50 +14,50 @@
           "primaryKey": true,
           "notNull": true
         },
-        "account_id": {
-          "name": "account_id",
+        "accountId": {
+          "name": "accountId",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "provider_id": {
-          "name": "provider_id",
+        "providerId": {
+          "name": "providerId",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "user_id": {
-          "name": "user_id",
+        "userId": {
+          "name": "userId",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "access_token": {
-          "name": "access_token",
+        "accessToken": {
+          "name": "accessToken",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "refresh_token": {
-          "name": "refresh_token",
+        "refreshToken": {
+          "name": "refreshToken",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "id_token": {
-          "name": "id_token",
+        "idToken": {
+          "name": "idToken",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "access_token_expires_at": {
-          "name": "access_token_expires_at",
+        "accessTokenExpiresAt": {
+          "name": "accessTokenExpiresAt",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
-        "refresh_token_expires_at": {
-          "name": "refresh_token_expires_at",
+        "refreshTokenExpiresAt": {
+          "name": "refreshTokenExpiresAt",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -74,29 +74,44 @@
           "primaryKey": false,
           "notNull": false
         },
-        "created_at": {
-          "name": "created_at",
+        "createdAt": {
+          "name": "createdAt",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
         },
-        "updated_at": {
-          "name": "updated_at",
+        "updatedAt": {
+          "name": "updatedAt",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
+          "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "account_userId_idx": {
+          "name": "account_userId_idx",
+          "columns": [
+            {
+              "expression": "userId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
-        "account_user_id_user_id_fk": {
-          "name": "account_user_id_user_id_fk",
+        "account_userId_user_id_fk": {
+          "name": "account_userId_user_id_fk",
           "tableFrom": "account",
           "tableTo": "user",
           "columnsFrom": [
-            "user_id"
+            "userId"
           ],
           "columnsTo": [
             "id"
@@ -410,380 +425,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.booking_quotes": {
-      "name": "booking_quotes",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "plan_id": {
-          "name": "plan_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "version_id": {
-          "name": "version_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "option_id": {
-          "name": "option_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "buyer_user_id": {
-          "name": "buyer_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "binding_hash": {
-          "name": "binding_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "mode": {
-          "name": "mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "payload": {
-          "name": "payload",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "booking_quotes_plan_id_plans_id_fk": {
-          "name": "booking_quotes_plan_id_plans_id_fk",
-          "tableFrom": "booking_quotes",
-          "tableTo": "plans",
-          "columnsFrom": [
-            "plan_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "booking_quotes_version_id_plan_versions_id_fk": {
-          "name": "booking_quotes_version_id_plan_versions_id_fk",
-          "tableFrom": "booking_quotes",
-          "tableTo": "plan_versions",
-          "columnsFrom": [
-            "version_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "booking_quotes_option_id_plan_options_id_fk": {
-          "name": "booking_quotes_option_id_plan_options_id_fk",
-          "tableFrom": "booking_quotes",
-          "tableTo": "plan_options",
-          "columnsFrom": [
-            "option_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "booking_quotes_buyer_user_id_user_id_fk": {
-          "name": "booking_quotes_buyer_user_id_user_id_fk",
-          "tableFrom": "booking_quotes",
-          "tableTo": "user",
-          "columnsFrom": [
-            "buyer_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.bookings": {
-      "name": "bookings",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "plan_id": {
-          "name": "plan_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "version_id": {
-          "name": "version_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "quote_id": {
-          "name": "quote_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "authorization_id": {
-          "name": "authorization_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "merchant_order_ref": {
-          "name": "merchant_order_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "confirmation_url": {
-          "name": "confirmation_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "actual_total": {
-          "name": "actual_total",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "mode": {
-          "name": "mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "bookings_plan_id_plans_id_fk": {
-          "name": "bookings_plan_id_plans_id_fk",
-          "tableFrom": "bookings",
-          "tableTo": "plans",
-          "columnsFrom": [
-            "plan_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "bookings_version_id_plan_versions_id_fk": {
-          "name": "bookings_version_id_plan_versions_id_fk",
-          "tableFrom": "bookings",
-          "tableTo": "plan_versions",
-          "columnsFrom": [
-            "version_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "bookings_quote_id_booking_quotes_id_fk": {
-          "name": "bookings_quote_id_booking_quotes_id_fk",
-          "tableFrom": "bookings",
-          "tableTo": "booking_quotes",
-          "columnsFrom": [
-            "quote_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "bookings_authorization_id_buyer_authorizations_id_fk": {
-          "name": "bookings_authorization_id_buyer_authorizations_id_fk",
-          "tableFrom": "bookings",
-          "tableTo": "buyer_authorizations",
-          "columnsFrom": [
-            "authorization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "bookings_authorization_id_unique": {
-          "name": "bookings_authorization_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "authorization_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.buyer_authorizations": {
-      "name": "buyer_authorizations",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "quote_id": {
-          "name": "quote_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "buyer_user_id": {
-          "name": "buyer_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "wallet_request_id": {
-          "name": "wallet_request_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "approved_binding_hash": {
-          "name": "approved_binding_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "mode": {
-          "name": "mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "checked_at": {
-          "name": "checked_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "buyer_authorizations_quote_id_booking_quotes_id_fk": {
-          "name": "buyer_authorizations_quote_id_booking_quotes_id_fk",
-          "tableFrom": "buyer_authorizations",
-          "tableTo": "booking_quotes",
-          "columnsFrom": [
-            "quote_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "buyer_authorizations_buyer_user_id_user_id_fk": {
-          "name": "buyer_authorizations_buyer_user_id_user_id_fk",
-          "tableFrom": "buyer_authorizations",
-          "tableTo": "user",
-          "columnsFrom": [
-            "buyer_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "buyer_authorizations_wallet_request_id_unique": {
-          "name": "buyer_authorizations_wallet_request_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "wallet_request_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.calendar_connections": {
       "name": "calendar_connections",
       "schema": "",
@@ -959,10 +600,9 @@
       "columns": {
         "id": {
           "name": "id",
-          "type": "uuid",
+          "type": "text",
           "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
+          "notNull": true
         },
         "kind": {
           "name": "kind",
@@ -1221,7 +861,7 @@
         },
         "quote_id": {
           "name": "quote_id",
-          "type": "uuid",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -1273,19 +913,6 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "external_effects_quote_id_booking_quotes_id_fk": {
-          "name": "external_effects_quote_id_booking_quotes_id_fk",
-          "tableFrom": "external_effects",
-          "tableTo": "booking_quotes",
-          "columnsFrom": [
-            "quote_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1310,17 +937,16 @@
           "name": "id",
           "type": "uuid",
           "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
+          "notNull": true
         },
-        "inviter_user_id": {
-          "name": "inviter_user_id",
+        "inviter_id": {
+          "name": "inviter_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "recipient_phone_enc": {
-          "name": "recipient_phone_enc",
+        "recipient_phone_encrypted": {
+          "name": "recipient_phone_encrypted",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -1343,12 +969,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "accepted_by_user_id": {
-          "name": "accepted_by_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "expires_at": {
           "name": "expires_at",
           "type": "timestamp with time zone",
@@ -1359,16 +979,42 @@
           "name": "created_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
+          "notNull": true
         }
       },
       "indexes": {
-        "friend_invites_recipient_phone_digest_index": {
-          "name": "friend_invites_recipient_phone_digest_index",
+        "friend_invites_recipient": {
+          "name": "friend_invites_recipient",
           "columns": [
             {
               "expression": "recipient_phone_digest",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "friend_invites_inviter": {
+          "name": "friend_invites_inviter",
+          "columns": [
+            {
+              "expression": "inviter_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1381,30 +1027,17 @@
         }
       },
       "foreignKeys": {
-        "friend_invites_inviter_user_id_user_id_fk": {
-          "name": "friend_invites_inviter_user_id_user_id_fk",
+        "friend_invites_inviter_id_user_id_fk": {
+          "name": "friend_invites_inviter_id_user_id_fk",
           "tableFrom": "friend_invites",
           "tableTo": "user",
           "columnsFrom": [
-            "inviter_user_id"
+            "inviter_id"
           ],
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "friend_invites_accepted_by_user_id_user_id_fk": {
-          "name": "friend_invites_accepted_by_user_id_user_id_fk",
-          "tableFrom": "friend_invites",
-          "tableTo": "user",
-          "columnsFrom": [
-            "accepted_by_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -1419,21 +1052,26 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "friend_invite_state": {
+          "name": "friend_invite_state",
+          "value": "\"friend_invites\".\"state\" in ('pending','accepted','declined')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.friendships": {
       "name": "friendships",
       "schema": "",
       "columns": {
-        "user_low": {
-          "name": "user_low",
+        "user_low_id": {
+          "name": "user_low_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "user_high": {
-          "name": "user_high",
+        "user_high_id": {
+          "name": "user_high_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -1454,42 +1092,51 @@
           "name": "accepted_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
+          "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "friendships_high": {
+          "name": "friendships_high",
+          "columns": [
+            {
+              "expression": "user_high_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
-        "friendships_user_low_user_id_fk": {
-          "name": "friendships_user_low_user_id_fk",
+        "friendships_user_low_id_user_id_fk": {
+          "name": "friendships_user_low_id_user_id_fk",
           "tableFrom": "friendships",
           "tableTo": "user",
           "columnsFrom": [
-            "user_low"
+            "user_low_id"
           ],
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "friendships_user_high_user_id_fk": {
-          "name": "friendships_user_high_user_id_fk",
+        "friendships_user_high_id_user_id_fk": {
+          "name": "friendships_user_high_id_user_id_fk",
           "tableFrom": "friendships",
           "tableTo": "user",
           "columnsFrom": [
-            "user_high"
+            "user_high_id"
           ],
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "friendships_requested_by_user_id_fk": {
@@ -1502,16 +1149,16 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
-        "friendships_user_low_user_high_pk": {
-          "name": "friendships_user_low_user_high_pk",
+        "friendships_user_low_id_user_high_id_pk": {
+          "name": "friendships_user_low_id_user_high_id_pk",
           "columns": [
-            "user_low",
-            "user_high"
+            "user_low_id",
+            "user_high_id"
           ]
         }
       },
@@ -1520,9 +1167,378 @@
       "checkConstraints": {
         "friendship_order": {
           "name": "friendship_order",
-          "value": "\"friendships\".\"user_low\" < \"friendships\".\"user_high\""
+          "value": "\"friendships\".\"user_low_id\" < \"friendships\".\"user_high_id\""
+        },
+        "friendship_status": {
+          "name": "friendship_status",
+          "value": "\"friendships\".\"status\" in ('accepted')"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.fulfillment_authorizations": {
+      "name": "fulfillment_authorizations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "plan_id": {
+          "name": "plan_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "fulfillment_authorizations_plan_id_idx": {
+          "name": "fulfillment_authorizations_plan_id_idx",
+          "columns": [
+            {
+              "expression": "plan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.fulfillment_bookings": {
+      "name": "fulfillment_bookings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "plan_id": {
+          "name": "plan_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "fulfillment_bookings_plan_id_idx": {
+          "name": "fulfillment_bookings_plan_id_idx",
+          "columns": [
+            {
+              "expression": "plan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.fulfillment_changes": {
+      "name": "fulfillment_changes",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "plan_id": {
+          "name": "plan_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "fulfillment_changes_plan_id_idx": {
+          "name": "fulfillment_changes_plan_id_idx",
+          "columns": [
+            {
+              "expression": "plan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.fulfillment_effects": {
+      "name": "fulfillment_effects",
+      "schema": "",
+      "columns": {
+        "effect_key": {
+          "name": "effect_key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "plan_id": {
+          "name": "plan_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "fulfillment_effects_plan_id_idx": {
+          "name": "fulfillment_effects_plan_id_idx",
+          "columns": [
+            {
+              "expression": "plan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.fulfillment_private_deliveries": {
+      "name": "fulfillment_private_deliveries",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "plan_id": {
+          "name": "plan_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "fulfillment_private_deliveries_plan_id_idx": {
+          "name": "fulfillment_private_deliveries_plan_id_idx",
+          "columns": [
+            {
+              "expression": "plan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.fulfillment_quotes": {
+      "name": "fulfillment_quotes",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "plan_id": {
+          "name": "plan_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "fulfillment_quotes_plan_id_idx": {
+          "name": "fulfillment_quotes_plan_id_idx",
+          "columns": [
+            {
+              "expression": "plan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.fulfillment_reimbursements": {
+      "name": "fulfillment_reimbursements",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "plan_id": {
+          "name": "plan_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "booking_id": {
+          "name": "booking_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payer_user_id": {
+          "name": "payer_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "fulfillment_reimbursements_plan_id_idx": {
+          "name": "fulfillment_reimbursements_plan_id_idx",
+          "columns": [
+            {
+              "expression": "plan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "fulfillment_reimbursements_booking_id_idx": {
+          "name": "fulfillment_reimbursements_booking_id_idx",
+          "columns": [
+            {
+              "expression": "booking_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "fulfillment_reimbursements_booking_payer_unique": {
+          "name": "fulfillment_reimbursements_booking_payer_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "booking_id",
+            "payer_user_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.inbound_events": {
@@ -3006,147 +3022,47 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.reimbursements": {
-      "name": "reimbursements",
+    "public.rateLimit": {
+      "name": "rateLimit",
       "schema": "",
       "columns": {
         "id": {
           "name": "id",
-          "type": "uuid",
+          "type": "text",
           "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "booking_id": {
-          "name": "booking_id",
-          "type": "uuid",
-          "primaryKey": false,
           "notNull": true
         },
-        "payer_user_id": {
-          "name": "payer_user_id",
+        "key": {
+          "name": "key",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "recipient_user_id": {
-          "name": "recipient_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "amount_minor": {
-          "name": "amount_minor",
+        "count": {
+          "name": "count",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'USD'"
-        },
-        "payment_url": {
-          "name": "payment_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
+        "lastRequest": {
+          "name": "lastRequest",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": true
-        },
-        "confirmation_source": {
-          "name": "confirmation_source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'none'"
-        },
-        "mode": {
-          "name": "mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
         }
       },
-      "indexes": {
-        "reimbursements_booking_id_payer_user_id_index": {
-          "name": "reimbursements_booking_id_payer_user_id_index",
-          "columns": [
-            {
-              "expression": "booking_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "payer_user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "reimbursements_booking_id_bookings_id_fk": {
-          "name": "reimbursements_booking_id_bookings_id_fk",
-          "tableFrom": "reimbursements",
-          "tableTo": "bookings",
-          "columnsFrom": [
-            "booking_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "reimbursements_payer_user_id_user_id_fk": {
-          "name": "reimbursements_payer_user_id_user_id_fk",
-          "tableFrom": "reimbursements",
-          "tableTo": "user",
-          "columnsFrom": [
-            "payer_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "reimbursements_recipient_user_id_user_id_fk": {
-          "name": "reimbursements_recipient_user_id_user_id_fk",
-          "tableFrom": "reimbursements",
-          "tableTo": "user",
-          "columnsFrom": [
-            "recipient_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
+      "indexes": {},
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "rateLimit_key_unique": {
+          "name": "rateLimit_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "key"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -3272,8 +3188,8 @@
           "primaryKey": true,
           "notNull": true
         },
-        "expires_at": {
-          "name": "expires_at",
+        "expiresAt": {
+          "name": "expiresAt",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
@@ -3284,47 +3200,62 @@
           "primaryKey": false,
           "notNull": true
         },
-        "ip_address": {
-          "name": "ip_address",
-          "type": "text",
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": "now()"
         },
-        "user_agent": {
-          "name": "user_agent",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
         },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
+        "ipAddress": {
+          "name": "ipAddress",
+          "type": "text",
           "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
+          "notNull": false
         },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
+        "userAgent": {
+          "name": "userAgent",
+          "type": "text",
           "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
+          "notNull": false
+        },
+        "userId": {
+          "name": "userId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "session_userId_idx": {
+          "name": "session_userId_idx",
+          "columns": [
+            {
+              "expression": "userId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
-        "session_user_id_user_id_fk": {
-          "name": "session_user_id_user_id_fk",
+        "session_userId_user_id_fk": {
+          "name": "session_userId_user_id_fk",
           "tableFrom": "session",
           "tableTo": "user",
           "columnsFrom": [
-            "user_id"
+            "userId"
           ],
           "columnsTo": [
             "id"
@@ -3353,10 +3284,9 @@
       "columns": {
         "id": {
           "name": "id",
-          "type": "uuid",
+          "type": "text",
           "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
+          "notNull": true
         },
         "url": {
           "name": "url",
@@ -3497,12 +3427,11 @@
           "primaryKey": false,
           "notNull": true
         },
-        "email_verified": {
-          "name": "email_verified",
+        "emailVerified": {
+          "name": "emailVerified",
           "type": "boolean",
           "primaryKey": false,
-          "notNull": true,
-          "default": false
+          "notNull": true
         },
         "image": {
           "name": "image",
@@ -3510,22 +3439,35 @@
           "primaryKey": false,
           "notNull": false
         },
-        "phone_number": {
-          "name": "phone_number",
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "phoneNumber": {
+          "name": "phoneNumber",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "phone_number_verified": {
-          "name": "phone_number_verified",
+        "phoneNumberVerified": {
+          "name": "phoneNumberVerified",
           "type": "boolean",
           "primaryKey": false,
-          "notNull": true,
-          "default": false
+          "notNull": false
         },
         "city": {
           "name": "city",
-          "type": "jsonb",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -3533,29 +3475,13 @@
           "name": "interests",
           "type": "jsonb",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
+          "notNull": false
         },
-        "onboarding_completed": {
-          "name": "onboarding_completed",
+        "onboardingComplete": {
+          "name": "onboardingComplete",
           "type": "boolean",
           "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
+          "notNull": false
         }
       },
       "indexes": {},
@@ -3569,11 +3495,11 @@
             "email"
           ]
         },
-        "user_phone_number_unique": {
-          "name": "user_phone_number_unique",
+        "user_phoneNumber_unique": {
+          "name": "user_phoneNumber_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "phone_number"
+            "phoneNumber"
           ]
         }
       },
@@ -3603,28 +3529,44 @@
           "primaryKey": false,
           "notNull": true
         },
-        "expires_at": {
-          "name": "expires_at",
+        "expiresAt": {
+          "name": "expiresAt",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
         },
-        "created_at": {
-          "name": "created_at",
+        "createdAt": {
+          "name": "createdAt",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
         },
-        "updated_at": {
-          "name": "updated_at",
+        "updatedAt": {
+          "name": "updatedAt",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "verification_identifier_idx": {
+          "name": "verification_identifier_idx",
+          "columns": [
+            {
+              "expression": "identifier",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -3828,72 +3770,6 @@
             "version_id",
             "user_id",
             "option_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.wallet_connections": {
-      "name": "wallet_connections",
-      "schema": "",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "provider": {
-          "name": "provider",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "auth_enc": {
-          "name": "auth_enc",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "wallet_connections_user_id_user_id_fk": {
-          "name": "wallet_connections_user_id_user_id_fk",
-          "tableFrom": "wallet_connections",
-          "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "wallet_connections_user_id_provider_pk": {
-          "name": "wallet_connections_user_id_provider_pk",
-          "columns": [
-            "user_id",
-            "provider"
           ]
         }
       },

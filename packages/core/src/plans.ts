@@ -1,9 +1,10 @@
 import { and, eq, inArray, isNull, max, or, sql } from 'drizzle-orm';
 import {
   plans, planParticipants, planVersions, planOptions, polls, planDecisions, friendships, user, messages, planConversations, sources,
+  votes, voteStates,
   type Db,
 } from '@hacktx/db';
-import { PlanOption, type ActorContext, type City, type Interval, type PlanStatus } from '@hacktx/contracts';
+import { City as CityS, PlanOption, type ActorContext, type City, type Interval, type PlanStatus } from '@hacktx/contracts';
 import { invalid, notFound, stale, AppError } from './errors';
 import { enqueue } from './jobs';
 
@@ -212,6 +213,9 @@ export async function publicPlan(db: Db, actor: ActorContext, planId: string) {
     ? await db.select().from(planDecisions).where(eq(planDecisions.versionId, plan.activeVersionId)).orderBy(sql`${planDecisions.recordedAt} desc`).limit(1)
     : [];
   const sourceIds = [...new Set(options.flatMap((o) => o.sourceIds))];
+  // Current votes are part of the group-visible plan (CONTRACTS.md §5); one entry per voter on the active version.
+  const voteRows = plan.activeVersionId ? await db.select().from(votes).where(eq(votes.versionId, plan.activeVersionId)) : [];
+  const stateRows = plan.activeVersionId ? await db.select().from(voteStates).where(eq(voteStates.versionId, plan.activeVersionId)) : [];
   const sourceRows = sourceIds.length ? await db.select().from(sources).where(inArray(sources.id, sourceIds)) : [];
   return {
     id: plan.id,
@@ -225,6 +229,10 @@ export async function publicPlan(db: Db, actor: ActorContext, planId: string) {
     pendingInvites: invited.map((i) => i.requestedName),
     activeVersionId: plan.activeVersionId,
     options: options.sort((a, b) => a.label.localeCompare(b.label)),
+    votes: stateRows.map((v) => ({
+      userId: v.userId, versionId: v.versionId, favoriteOptionId: v.favoriteOptionId, noneAcceptable: v.noneAcceptable,
+      acceptableOptionIds: voteRows.filter((r) => r.userId === v.userId).map((r) => r.optionId),
+    })),
     sources: sourceRows.map((s) => ({ id: s.id, url: s.url, title: s.title, provider: s.provider, fetchedAt: s.fetchedAt.toISOString() })),
     decision: decision ? { optionId: decision.optionId, attendeeUserIds: decision.attendeeUserIds, recordedAt: decision.recordedAt.toISOString() } : null,
   };
@@ -288,4 +296,14 @@ export async function closePlan(db: Db, actor: ActorContext, planId: string, exp
   const plan = await assertMember(db, planId, actor.userId);
   if (plan.organizerUserId !== actor.userId) throw new AppError('FORBIDDEN', 'Only the organizer can close the plan');
   return setStatus(db, planId, expectedRevision, 'closed');
+}
+
+/** `user.city` is a JSON-encoded City string (Better Auth string field, written by Part 1's accounts repository). */
+export function parseCity(raw: unknown): City | null {
+  try {
+    const r = CityS.safeParse(typeof raw === 'string' ? JSON.parse(raw) : raw);
+    return r.success ? r.data : null;
+  } catch {
+    return null;
+  }
 }

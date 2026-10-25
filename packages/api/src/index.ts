@@ -8,25 +8,28 @@ import { asc, desc, eq, inArray } from 'drizzle-orm';
 import { agentRuns, messages, runSteps, user, type Db } from '@hacktx/db';
 import { City, Interval, PrivateFactValue, type ActorContext } from '@hacktx/contracts';
 import {
-  AGENT_HANDLE, AppError, activeTally, assertMember, closePlan, enqueue, open, seal, webConversation, createPlan, listOwnFacts, listPlans, publicPlan, recordDecision, recordVote,
+  AGENT_HANDLE, AppError, activeTally, assertMember, closePlan, parseCity, enqueue, open, seal, webConversation, createPlan, listOwnFacts, listPlans, publicPlan, recordDecision, recordVote,
   savePrivateFact, updateParticipants,
 } from '@hacktx/core';
 import { templates } from '@hacktx/templates';
 
 type Cfg = { db: Db; getUserId(req: Request): Promise<string | null>; appOrigin?: string; teamUserIds?: string[] };
-let cfg: Cfg | null = null;
-export function configureApi(c: Cfg) { cfg = c; }
+// Kept on globalThis: Next loads instrumentation and each route bundle as separate module instances.
+const registry = globalThis as typeof globalThis & { hacktxApiCfg?: Cfg };
+export function configureApi(c: Cfg) { registry.hacktxApiCfg = c; }
 
 type Ctx = { req: Request; db: Db; actor: ActorContext; params: Record<string, string>; requestId: string };
-type NextCtx = { params?: Promise<Record<string, string>> | Record<string, string> };
+// Matches Next.js route context exactly (its build-time type check rejects an optional second argument).
+type NextCtx = { params: Promise<Record<string, string>> };
 
 const HEADERS = { 'content-type': 'application/json', 'cache-control': 'private, no-store' };
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: HEADERS });
 
 function route(fn: (ctx: Ctx) => Promise<{ data: unknown; revision?: number }>) {
-  return async (req: Request, next?: NextCtx): Promise<Response> => {
+  return async (req: Request, next: NextCtx): Promise<Response> => {
     const requestId = randomUUID();
     try {
+      const cfg = registry.hacktxApiCfg;
       if (!cfg) throw new AppError('INTERNAL', 'API not configured');
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         // Same-origin check for cookie-authenticated mutations (CSRF).
@@ -36,7 +39,7 @@ function route(fn: (ctx: Ctx) => Promise<{ data: unknown; revision?: number }>) 
       }
       const userId = await cfg.getUserId(req);
       if (!userId) return json(401, { error: { code: 'FORBIDDEN', message: 'Sign in required', retryable: false }, requestId });
-      const params = (await next?.params) ?? {};
+      const params = (await next?.params) ?? {}; // `next` may be absent when called outside Next
       return json(200, await fn({ req, db: cfg.db, actor: { userId, source: 'web' }, params, requestId }));
     } catch (e) {
       if (e instanceof AppError) return json(e.status, e.toBody(requestId));
@@ -59,13 +62,16 @@ export const createPlanRoute = route(async ({ req, db, actor }) => {
     mode: z.enum(['live', 'test']).default('test'),
   }));
   const [me] = await db.select({ city: user.city }).from(user).where(eq(user.id, actor.userId));
-  const city = City.safeParse(me?.city);
-  if (!city.success) throw new AppError('UNRESOLVED', 'Set your city in your profile first');
-  const { plan, missingConnections } = await createPlan(db, actor, { ...b, city: city.data });
+  const city = parseCity(me?.city);
+  if (!city) throw new AppError('UNRESOLVED', 'Set your city in your profile first');
+  const { plan, missingConnections } = await createPlan(db, actor, { ...b, city });
   return { data: { id: plan.id, status: plan.status, missingConnections: missingConnections.length }, revision: plan.inputRevision };
 });
 
-export const listPlansRoute = route(async ({ db, actor }) => ({ data: await listPlans(db, actor) }));
+// CONTRACTS.md: membership-filtered public projections (same shape as GET /plans/:id).
+export const listPlansRoute = route(async ({ db, actor }) => ({
+  data: await Promise.all((await listPlans(db, actor)).map((p) => publicPlan(db, actor, p.id))),
+}));
 
 export const getPlan = route(async ({ db, actor, params }) => {
   const p = await publicPlan(db, actor, params.id!);
@@ -102,7 +108,16 @@ export const postClose = route(async ({ req, db, actor, params }) => {
 });
 
 // ---------- own private details ----------
-export const getPrivate = route(async ({ db, actor, params }) => ({ data: { facts: await listOwnFacts(db, actor, params.id!) } }));
+export const getPrivate = route(async ({ db, actor, params }) => {
+  const facts = await listOwnFacts(db, actor, params.id!);
+  const thread = await webConversation(db, params.id!, 'private', actor.userId);
+  const rows = await db.select().from(messages).where(eq(messages.conversationId, thread.id)).orderBy(asc(messages.occurredAt));
+  return { data: {
+    ownerUserId: actor.userId,
+    facts: facts.map((f) => ({ id: f.id, kind: f.kind, value: f.value })),
+    messages: rows.map((r) => ({ id: r.id, text: `${r.senderHandle === AGENT_HANDLE ? 'Agent' : 'You'}: ${open('message', r.bodyEnc!)}` })),
+  } };
+});
 
 /** Manual availability / limits / preferences from the web (the no-calendar fallback). Owner-only by construction. */
 export const putPrivateFact = route(async ({ req, db, actor, params }) => {
@@ -112,7 +127,7 @@ export const putPrivateFact = route(async ({ req, db, actor, params }) => {
 
 // ---------- Studio (team allowlist, redacted) ----------
 function assertTeam(actor: ActorContext) {
-  const team = cfg?.teamUserIds ?? (process.env.TEAM_ADMIN_USER_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const team = registry.hacktxApiCfg?.teamUserIds ?? (process.env.TEAM_ADMIN_USER_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   if (!team.includes(actor.userId)) throw new AppError('NOT_FOUND', 'Not found');
 }
 
@@ -129,6 +144,9 @@ export const getStudioRuns = route(async ({ req, db, actor }) => {
   return {
     data: runs.map((r) => ({
       ...r,
+      startedAt: r.startedAt.toISOString(),
+      summary: `${r.task} · ${r.templateId} v${r.templateVersion} · ${r.inputTokens + r.outputTokens} tokens · ~$${Number(r.estimatedCostUsd).toFixed(4)}${r.error ? ` · ${r.error}` : ''}`,
+      mode: 'test' as const, // no live purchases are made by agent runs
       estimatedCostUsd: Number(r.estimatedCostUsd),
       steps: steps.filter((s) => s.runId === r.id).sort((a, b) => a.index - b.index).map((s) => ({ ...s, estimatedCostUsd: Number(s.estimatedCostUsd) })),
     })),

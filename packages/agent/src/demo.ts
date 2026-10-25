@@ -28,7 +28,7 @@ console.log(`discovery: ${process.env.SERPAPI_API_KEY ? 'LIVE SerpApi (Part 4 ad
 
 const city = { label: 'Austin, Texas, United States', countryCode: 'US', latitude: 30.27, longitude: -97.74, timeZone: 'America/Chicago' };
 const ids = { alex: 'u_alex', mark: 'u_mark', mel: 'u_mel' };
-for (const [k, id] of Object.entries(ids)) await db.insert(user).values({ id, name: k[0]!.toUpperCase() + k.slice(1), email: `${id}@users.invalid`, city });
+for (const [k, id] of Object.entries(ids)) await db.insert(user).values({ id, name: k[0]!.toUpperCase() + k.slice(1), email: `${id}@users.invalid`, emailVerified: false, city: JSON.stringify(city) });
 for (const f of [ids.mark, ids.mel]) await db.insert(friendships).values({ userLow: ids.alex < f ? ids.alex : f, userHigh: ids.alex < f ? f : ids.alex, requestedBy: ids.alex, status: 'accepted', acceptedAt: new Date() });
 for (const [i, id] of Object.values(ids).entries()) await db.insert(messagingIdentities).values({ userId: id, provider: 'linq', handle: `+1512555010${i}`, kind: 'phone', verifiedAt: new Date() });
 

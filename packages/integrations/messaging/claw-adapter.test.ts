@@ -23,7 +23,7 @@ let db: Db;
 beforeEach(async () => {
   db = drizzle(new PGlite(), { schema }) as unknown as Db;
   await migrate(db as never, { migrationsFolder });
-  await db.insert(user).values({ id: 'u_alex', name: 'Alex', email: 'u_alex@users.invalid', city: austin, phoneNumber: '+15125550100', phoneNumberVerified: true });
+  await db.insert(user).values({ id: 'u_alex', name: 'Alex', email: 'u_alex@users.invalid', emailVerified: false, city: JSON.stringify(austin), phoneNumber: '+15125550100', phoneNumberVerified: true });
 });
 
 const inbound = (over: Partial<ClawInboundMessage> = {}): ClawInboundMessage => ({
@@ -106,7 +106,7 @@ describe('send_outbox', () => {
     await createSendOutboxHandler(client)({ db, job: await jobFor('send_outbox') });
     expect(client.sent[0]!.target).toEqual({ to: '+15125550100' });
 
-    await db.insert(user).values({ id: 'u_new', name: 'New', email: 'u_new@users.invalid', city: austin, phoneNumber: '+15125550111' });
+    await db.insert(user).values({ id: 'u_new', name: 'New', email: 'u_new@users.invalid', emailVerified: false, city: JSON.stringify(austin), phoneNumber: '+15125550111' });
     await db.delete(jobs);
     await enqueueMessage(db, { recipient: { kind: 'private', userId: 'u_new' }, text: 'hi', effectKey: 'k4' });
     await expect(createSendOutboxHandler(client)({ db, job: await jobFor('send_outbox') })).rejects.toMatchObject({ code: 'UNRESOLVED' });

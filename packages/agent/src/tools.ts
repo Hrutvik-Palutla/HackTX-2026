@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { and, eq, or } from 'drizzle-orm';
 import { conversations, friendships, planConversations, planOptions, plans, user, type Db } from '@hacktx/db';
 import { City, type ActorContext } from '@hacktx/contracts';
-import { AppError, activeTally, assertMember, createPlan, enqueueMessage, publicPlan, recordDecision, recordVote, requestRepair, savePrivateFact } from '@hacktx/core';
+import { AppError, activeTally, assertMember, createPlan, enqueueMessage, parseCity, publicPlan, recordDecision, recordVote, requestRepair, savePrivateFact } from '@hacktx/core';
 import type { ToolSpec } from './muse';
 
 export type ToolCtx = {
@@ -75,11 +75,11 @@ export const TOOLS = [
         return { created: false, ambiguous: r.ambiguous, notConnected: r.unknown, hint: 'Ask which person they mean, or ask the organizer for the phone number of anyone not connected yet.' };
       }
       const [me] = await ctx.db.select({ city: user.city }).from(user).where(eq(user.id, ctx.actor.userId));
-      const city = City.safeParse(me?.city);
-      if (!city.success) return { created: false, error: 'Organizer has no city on file; ask where the outing should be.' };
+      const city = parseCity(me?.city);
+      if (!city) return { created: false, error: 'Organizer has no city on file; ask where the outing should be.' };
       const window = a.windowStartAt && a.windowEndAt ? { startAt: a.windowStartAt, endAt: a.windowEndAt } : null;
       const { plan, missingConnections } = await createPlan(ctx.db, ctx.actor, {
-        request: a.request, templateId: a.kind, city: city.data, window, participantUserIds: r.matched.map((m) => m.userId),
+        request: a.request, templateId: a.kind, city, window, participantUserIds: r.matched.map((m) => m.userId),
       });
       await linkConversation(ctx.db, plan.id, ctx.conversation, ctx.actor.userId);
       return { created: true, planId: plan.id, status: plan.status, participants: r.matched.map((m) => m.name), pendingConnections: missingConnections.length };

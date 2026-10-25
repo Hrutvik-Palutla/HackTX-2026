@@ -25,6 +25,7 @@ async function setup() {
 const req = (method: string, body?: unknown, origin = ORIGIN) =>
   new Request('https://app.example.test/api/x', { method, headers: { origin, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
 const P = (id: string) => ({ params: Promise.resolve({ id }) });
+const NO_PARAMS = { params: Promise.resolve({}) };
 
 describe('http api', () => {
   it('requires a session, hides other plans, and is no-store', async () => {
@@ -63,10 +64,10 @@ describe('http api', () => {
 
   it('studio is team-only; bad input is a 400', async () => {
     const { u, login } = await setup();
-    expect((await getStudioRuns(req('GET'))).status).toBe(200);
+    expect((await getStudioRuns(req('GET'), NO_PARAMS)).status).toBe(200);
     login(u.Mark!);
-    expect((await getStudioRuns(req('GET'))).status).toBe(404);
-    expect((await createPlanRoute(req('POST', { request: 'x' }))).status).toBe(400);
+    expect((await getStudioRuns(req('GET'), NO_PARAMS)).status).toBe(404);
+    expect((await createPlanRoute(req('POST', { request: 'x' }), NO_PARAMS)).status).toBe(400);
   });
 });
 
@@ -104,7 +105,7 @@ describe('polls, roster, resume, reminders', () => {
     await befriend(db, u.Alex!, u.Mel!, 'pending');
     const { plan } = await createPlan(db, web(u.Alex!), { request: 'bowling', templateId: 'local-outing', city: austin, window: null, participantUserIds: [u.Mel!] });
     expect(await resumeWaitingPlans(db, u.Mel!)).toEqual([]);
-    await db.update(friendships).set({ status: 'accepted', acceptedAt: new Date() });
+    await befriend(db, u.Alex!, u.Mel!); // invitation accepted -> friendship row appears
     expect(await resumeWaitingPlans(db, u.Mel!)).toEqual([plan.id]);
     expect((await db.select().from(plans))[0]!.status).toBe('planning');
     expect((await db.select().from(jobs)).filter((j) => j.kind === 'plan')).toHaveLength(1);

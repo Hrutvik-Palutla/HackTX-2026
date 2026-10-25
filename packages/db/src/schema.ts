@@ -2,7 +2,7 @@
 // Encrypted columns (`*_enc`) hold AES-256-GCM envelopes from @hacktx/core/crypto, never plaintext.
 import { sql } from 'drizzle-orm';
 import {
-  pgTable, text, uuid, timestamp, boolean, integer, jsonb, numeric,
+  pgTable, text, uuid, timestamp, boolean, integer, bigint, jsonb, numeric,
   primaryKey, unique, uniqueIndex, index, check, type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 
@@ -11,57 +11,65 @@ const created = () => ts('created_at').notNull().defaultNow();
 const updated = () => ts('updated_at').notNull().defaultNow();
 const pk = () => uuid('id').primaryKey().defaultRandom();
 
-// ---------- Better Auth (core + phone-number plugin) ----------
-// Part 1: verify against `npx @better-auth/cli generate` for the pinned config; JS keys are what the adapter maps.
+// ---------- Better Auth (core + phone-number plugin + database rate limit) ----------
+// Mirrors the DDL printed by Part 1's `pnpm accounts:schema` (Better Auth's own migration compiler) exactly,
+// including camelCase column names, because Part 1's account repository queries these columns directly.
 export const user = pgTable('user', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   email: text('email').notNull().unique(), // synthetic `.invalid` address; never a contact
-  emailVerified: boolean('email_verified').notNull().default(false),
+  emailVerified: boolean('emailVerified').notNull(),
   image: text('image'),
-  phoneNumber: text('phone_number').unique(), // E.164
-  phoneNumberVerified: boolean('phone_number_verified').notNull().default(false),
-  city: jsonb('city'), // contracts City
-  interests: jsonb('interests').$type<string[]>().notNull().default([]),
-  onboardingCompleted: boolean('onboarding_completed').notNull().default(false),
-  createdAt: created(),
-  updatedAt: updated(),
+  createdAt: ts('createdAt').notNull().defaultNow(),
+  updatedAt: ts('updatedAt').notNull().defaultNow(),
+  phoneNumber: text('phoneNumber').unique(), // E.164
+  phoneNumberVerified: boolean('phoneNumberVerified'),
+  city: text('city'), // JSON-encoded contracts City (Better Auth string field); parse with parseCity()
+  interests: jsonb('interests').$type<string[]>(),
+  onboardingComplete: boolean('onboardingComplete'),
 });
 
 export const session = pgTable('session', {
   id: text('id').primaryKey(),
-  expiresAt: ts('expires_at').notNull(),
+  expiresAt: ts('expiresAt').notNull(),
   token: text('token').notNull().unique(),
-  ipAddress: text('ip_address'),
-  userAgent: text('user_agent'),
-  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-  createdAt: created(),
-  updatedAt: updated(),
-});
+  createdAt: ts('createdAt').notNull().defaultNow(),
+  updatedAt: ts('updatedAt').notNull(),
+  ipAddress: text('ipAddress'),
+  userAgent: text('userAgent'),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+}, (t) => [index('session_userId_idx').on(t.userId)]);
 
 export const account = pgTable('account', {
   id: text('id').primaryKey(),
-  accountId: text('account_id').notNull(),
-  providerId: text('provider_id').notNull(),
-  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-  accessToken: text('access_token'),
-  refreshToken: text('refresh_token'),
-  idToken: text('id_token'),
-  accessTokenExpiresAt: ts('access_token_expires_at'),
-  refreshTokenExpiresAt: ts('refresh_token_expires_at'),
+  accountId: text('accountId').notNull(),
+  providerId: text('providerId').notNull(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  accessToken: text('accessToken'),
+  refreshToken: text('refreshToken'),
+  idToken: text('idToken'),
+  accessTokenExpiresAt: ts('accessTokenExpiresAt'),
+  refreshTokenExpiresAt: ts('refreshTokenExpiresAt'),
   scope: text('scope'),
   password: text('password'),
-  createdAt: created(),
-  updatedAt: updated(),
-});
+  createdAt: ts('createdAt').notNull().defaultNow(),
+  updatedAt: ts('updatedAt').notNull(),
+}, (t) => [index('account_userId_idx').on(t.userId)]);
 
 export const verification = pgTable('verification', {
   id: text('id').primaryKey(),
   identifier: text('identifier').notNull(),
   value: text('value').notNull(),
-  expiresAt: ts('expires_at').notNull(),
-  createdAt: created(),
-  updatedAt: updated(),
+  expiresAt: ts('expiresAt').notNull(),
+  createdAt: ts('createdAt').notNull().defaultNow(),
+  updatedAt: ts('updatedAt').notNull().defaultNow(),
+}, (t) => [index('verification_identifier_idx').on(t.identifier)]);
+
+export const rateLimit = pgTable('rateLimit', {
+  id: text('id').primaryKey(),
+  key: text('key').notNull().unique(),
+  count: integer('count').notNull(),
+  lastRequest: bigint('lastRequest', { mode: 'number' }).notNull(),
 });
 
 const userRef = (name: string) => text(name).references(() => user.id, { onDelete: 'cascade' });
@@ -77,26 +85,34 @@ export const messagingIdentities = pgTable('messaging_identities', {
   createdAt: created(),
 }, (t) => [uniqueIndex().on(t.provider, t.handle)]);
 
+// Columns per Part 1's handoff (docs/APP_ACCOUNTS_HANDOFF.md): a row exists only once accepted; pending lives in invites.
 export const friendships = pgTable('friendships', {
-  userLow: userRef('user_low').notNull(),
-  userHigh: userRef('user_high').notNull(),
-  requestedBy: userRef('requested_by').notNull(),
-  status: text('status').notNull(), // pending | accepted | declined
-  acceptedAt: ts('accepted_at'),
-  createdAt: created(),
-}, (t) => [primaryKey({ columns: [t.userLow, t.userHigh] }), check('friendship_order', sql`${t.userLow} < ${t.userHigh}`)]);
+  userLow: text('user_low_id').notNull().references(() => user.id),
+  userHigh: text('user_high_id').notNull().references(() => user.id),
+  requestedBy: text('requested_by').notNull().references(() => user.id),
+  status: text('status').notNull(), // accepted
+  acceptedAt: ts('accepted_at').notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.userLow, t.userHigh] }),
+  check('friendship_order', sql`${t.userLow} < ${t.userHigh}`),
+  check('friendship_status', sql`${t.status} in ('accepted')`),
+  index('friendships_high').on(t.userHigh),
+]);
 
 export const friendInvites = pgTable('friend_invites', {
-  id: pk(),
-  inviterUserId: userRef('inviter_user_id').notNull(),
-  recipientPhoneEnc: text('recipient_phone_enc').notNull(),
+  id: uuid('id').primaryKey(),
+  inviterUserId: text('inviter_id').notNull().references(() => user.id),
+  recipientPhoneEnc: text('recipient_phone_encrypted').notNull(),
   recipientPhoneDigest: text('recipient_phone_digest').notNull(), // HMAC(PHONE_LOOKUP_HMAC_KEY, e164)
   tokenHash: text('token_hash').notNull().unique(),
-  state: text('state').notNull(), // pending | accepted | declined | expired
-  acceptedByUserId: userRef('accepted_by_user_id'),
+  state: text('state').notNull(), // pending | accepted | declined
   expiresAt: ts('expires_at').notNull(),
-  createdAt: created(),
-}, (t) => [index().on(t.recipientPhoneDigest)]);
+  createdAt: ts('created_at').notNull(),
+}, (t) => [
+  check('friend_invite_state', sql`${t.state} in ('pending','accepted','declined')`),
+  index('friend_invites_recipient').on(t.recipientPhoneDigest, t.state),
+  index('friend_invites_inviter').on(t.inviterUserId, t.createdAt),
+]);
 
 // ---------- conversations ----------
 export const conversations = pgTable('conversations', {

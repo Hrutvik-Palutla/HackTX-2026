@@ -20,15 +20,17 @@ export async function seedUsers(db: Db, names: string[]) {
   const ids: Record<string, string> = {};
   for (const name of names) {
     const id = `u_${name.toLowerCase()}`;
-    await db.insert(user).values({ id, name, email: `${id}@users.invalid`, city: austin });
+    await db.insert(user).values({ id, name, email: `${id}@users.invalid`, emailVerified: false, city: JSON.stringify(austin) });
     ids[name] = id;
   }
   return ids;
 }
 
-export async function befriend(db: Db, a: string, b: string, status = 'accepted') {
+/** Accepted friendship row (Part 1's schema stores only accepted ones; 'pending' means no row yet). */
+export async function befriend(db: Db, a: string, b: string, status: 'accepted' | 'pending' = 'accepted') {
+  if (status === 'pending') return;
   const [lo, hi] = a < b ? [a, b] : [b, a];
-  await db.insert(friendships).values({ userLow: lo, userHigh: hi, requestedBy: a, status, acceptedAt: status === 'accepted' ? new Date() : null });
+  await db.insert(friendships).values({ userLow: lo, userHigh: hi, requestedBy: a, status, acceptedAt: new Date() });
 }
 
 export const web = (userId: string): ActorContext => ({ userId, source: 'web' });

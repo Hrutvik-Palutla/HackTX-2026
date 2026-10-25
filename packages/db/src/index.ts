@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -17,4 +18,5 @@ export function createDb(url = process.env.DATABASE_URL): { db: Db; pool: pg.Poo
   return { db: drizzle(pool, { schema }), pool };
 }
 
-export const migrationsFolder = fileURLToPath(new URL('../drizzle', import.meta.url));
+// Plain path math (not `new URL('../x', import.meta.url)`) so bundlers like Next's webpack don't try to bundle the folder.
+export const migrationsFolder = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'drizzle');

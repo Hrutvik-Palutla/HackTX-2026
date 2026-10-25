@@ -2,6 +2,19 @@
 
 Each owner keeps their own section current: status, files, what actually works + the check run, blockers, next action.
 
+## All four parts integrated — branch `integration/all` (October 24–25, 2026)
+
+Merged `main` (Part 1 app + Vultr deploy), `part3/messaging-calendar-deploy` (Claw Messenger), and `integration/part2-part4` (Parts 2 + 4). Verified locally:
+- **Checks:** both typechecks clean; `next build` succeeds. Tests: Part 2 + cross-part 28/28, Part 3 11/11, Part 1 accounts 8/8, Part 4 66/75 (the 9 failures are the known Windows-only `0700` permission checks).
+- **Journey in a real browser and API** (local Postgres, live SerpApi + Muse): Alex creates a plan through `POST /api/plans`; the worker publishes 3 real Austin options with source links; Mark opens `/plans/:id` and sees them; Mark's vote via `PUT /api/plans/:id/vote` is recorded as his and shown as saved; Studio shows the real run to the team account and 404s for others.
+- **Schema change (breaking, intentional):** Part 1's account code queries Better Auth's camelCase columns and `user_low_id`/`inviter_id`-style friend columns, so the Drizzle schema now matches the DDL printed by Part 1's `pnpm accounts:schema` and the handoff doc exactly, plus the `rateLimit` table. Migrations were squashed into one baseline, `0000_baseline.sql` (41 tables). Part 1's real repository was run against it: profile save, invite, accept, and friend list all work. **The old Tiger service (`b30joco0l9`) has the previous migrations and must not be reused; use the new service (`w3cwuqrto6`), which has a publicly signed certificate (verify-full passes).**
+- **Wiring:**
+  - Plan/Studio routes are one-line re-exports of `@hacktx/api`.
+  - `apps/web/lib/part2.ts` connects Better Auth sessions to the API.
+  - An accepted friendship enqueues a `resume_connections` job in the same transaction.
+  - The worker registers Part 3's `send_outbox`/`publish_poll` when `CLAW_MESSENGER_*` is set.
+- **Still missing:** a private OTP sender, so nobody can sign in through the UI yet (Part 3 owns this; register it with `configurePrivateOtpSender`). Deployed env and the new Tiger database are not yet applied.
+
 ## Tiger standard conversion — local development unblocked; certificate verification pending (October 24, 2026)
 
 - With the owner's explicit approval, converted `sidequest` (`b30joco0l9`) from free to standard. Console shows Ready, 0.5 CPU / 2 GiB RAM, normal compute estimate $0.04/hour / $31/month, covered by the current Performance trial (about 28 days and $1,000 credits remaining). Conversion cannot be reversed to free.

@@ -1,17 +1,17 @@
 CREATE TABLE "account" (
 	"id" text PRIMARY KEY NOT NULL,
-	"account_id" text NOT NULL,
-	"provider_id" text NOT NULL,
-	"user_id" text NOT NULL,
-	"access_token" text,
-	"refresh_token" text,
-	"id_token" text,
-	"access_token_expires_at" timestamp with time zone,
-	"refresh_token_expires_at" timestamp with time zone,
+	"accountId" text NOT NULL,
+	"providerId" text NOT NULL,
+	"userId" text NOT NULL,
+	"accessToken" text,
+	"refreshToken" text,
+	"idToken" text,
+	"accessTokenExpiresAt" timestamp with time zone,
+	"refreshTokenExpiresAt" timestamp with time zone,
 	"scope" text,
 	"password" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+	"createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+	"updatedAt" timestamp with time zone NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "agent_runs" (
@@ -54,47 +54,6 @@ CREATE TABLE "availability_snapshots" (
 	"valid_until" timestamp with time zone
 );
 --> statement-breakpoint
-CREATE TABLE "booking_quotes" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"plan_id" uuid NOT NULL,
-	"version_id" uuid NOT NULL,
-	"option_id" uuid NOT NULL,
-	"buyer_user_id" text NOT NULL,
-	"binding_hash" text NOT NULL,
-	"expires_at" timestamp with time zone NOT NULL,
-	"mode" text NOT NULL,
-	"payload" jsonb NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE "bookings" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"plan_id" uuid NOT NULL,
-	"version_id" uuid NOT NULL,
-	"quote_id" uuid,
-	"authorization_id" uuid,
-	"status" text NOT NULL,
-	"merchant_order_ref" text,
-	"confirmation_url" text,
-	"actual_total" jsonb,
-	"mode" text NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "bookings_authorization_id_unique" UNIQUE("authorization_id")
-);
---> statement-breakpoint
-CREATE TABLE "buyer_authorizations" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"quote_id" uuid NOT NULL,
-	"buyer_user_id" text NOT NULL,
-	"wallet_request_id" text NOT NULL,
-	"status" text NOT NULL,
-	"approved_binding_hash" text,
-	"mode" text NOT NULL,
-	"checked_at" timestamp with time zone NOT NULL,
-	CONSTRAINT "buyer_authorizations_wallet_request_id_unique" UNIQUE("wallet_request_id")
-);
---> statement-breakpoint
 CREATE TABLE "calendar_connections" (
 	"user_id" text PRIMARY KEY NOT NULL,
 	"refresh_token_enc" text NOT NULL,
@@ -116,7 +75,7 @@ CREATE TABLE "calendar_events" (
 );
 --> statement-breakpoint
 CREATE TABLE "candidates" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"id" text PRIMARY KEY NOT NULL,
 	"kind" text NOT NULL,
 	"payload" jsonb NOT NULL,
 	"cache_key" text NOT NULL,
@@ -147,7 +106,7 @@ CREATE TABLE "external_effects" (
 	"operation_key" text NOT NULL,
 	"kind" text NOT NULL,
 	"plan_id" uuid,
-	"quote_id" uuid,
+	"quote_id" text,
 	"state" text DEFAULT 'reserved' NOT NULL,
 	"provider_request_id" text,
 	"data" jsonb,
@@ -157,27 +116,72 @@ CREATE TABLE "external_effects" (
 );
 --> statement-breakpoint
 CREATE TABLE "friend_invites" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"inviter_user_id" text NOT NULL,
-	"recipient_phone_enc" text NOT NULL,
+	"id" uuid PRIMARY KEY NOT NULL,
+	"inviter_id" text NOT NULL,
+	"recipient_phone_encrypted" text NOT NULL,
 	"recipient_phone_digest" text NOT NULL,
 	"token_hash" text NOT NULL,
 	"state" text NOT NULL,
-	"accepted_by_user_id" text,
 	"expires_at" timestamp with time zone NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "friend_invites_token_hash_unique" UNIQUE("token_hash")
+	"created_at" timestamp with time zone NOT NULL,
+	CONSTRAINT "friend_invites_token_hash_unique" UNIQUE("token_hash"),
+	CONSTRAINT "friend_invite_state" CHECK ("friend_invites"."state" in ('pending','accepted','declined'))
 );
 --> statement-breakpoint
 CREATE TABLE "friendships" (
-	"user_low" text NOT NULL,
-	"user_high" text NOT NULL,
+	"user_low_id" text NOT NULL,
+	"user_high_id" text NOT NULL,
 	"requested_by" text NOT NULL,
 	"status" text NOT NULL,
-	"accepted_at" timestamp with time zone,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "friendships_user_low_user_high_pk" PRIMARY KEY("user_low","user_high"),
-	CONSTRAINT "friendship_order" CHECK ("friendships"."user_low" < "friendships"."user_high")
+	"accepted_at" timestamp with time zone NOT NULL,
+	CONSTRAINT "friendships_user_low_id_user_high_id_pk" PRIMARY KEY("user_low_id","user_high_id"),
+	CONSTRAINT "friendship_order" CHECK ("friendships"."user_low_id" < "friendships"."user_high_id"),
+	CONSTRAINT "friendship_status" CHECK ("friendships"."status" in ('accepted'))
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "fulfillment_authorizations" (
+	"id" text PRIMARY KEY NOT NULL,
+	"plan_id" text NOT NULL,
+	"payload" jsonb NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "fulfillment_bookings" (
+	"id" text PRIMARY KEY NOT NULL,
+	"plan_id" text NOT NULL,
+	"payload" jsonb NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "fulfillment_changes" (
+	"id" text PRIMARY KEY NOT NULL,
+	"plan_id" text NOT NULL,
+	"payload" jsonb NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "fulfillment_effects" (
+	"effect_key" text PRIMARY KEY NOT NULL,
+	"plan_id" text NOT NULL,
+	"payload" jsonb NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "fulfillment_private_deliveries" (
+	"id" text PRIMARY KEY NOT NULL,
+	"plan_id" text NOT NULL,
+	"payload" jsonb NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "fulfillment_quotes" (
+	"id" text PRIMARY KEY NOT NULL,
+	"plan_id" text NOT NULL,
+	"payload" jsonb NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "fulfillment_reimbursements" (
+	"id" text PRIMARY KEY NOT NULL,
+	"plan_id" text NOT NULL,
+	"booking_id" text NOT NULL,
+	"payer_user_id" text NOT NULL,
+	"payload" jsonb NOT NULL,
+	CONSTRAINT "fulfillment_reimbursements_booking_payer_unique" UNIQUE("booking_id","payer_user_id")
 );
 --> statement-breakpoint
 CREATE TABLE "inbound_events" (
@@ -333,18 +337,12 @@ CREATE TABLE "private_facts" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "reimbursements" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"booking_id" uuid NOT NULL,
-	"payer_user_id" text NOT NULL,
-	"recipient_user_id" text NOT NULL,
-	"amount_minor" integer NOT NULL,
-	"currency" text DEFAULT 'USD' NOT NULL,
-	"payment_url" text,
-	"status" text NOT NULL,
-	"confirmation_source" text DEFAULT 'none' NOT NULL,
-	"mode" text NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+CREATE TABLE "rateLimit" (
+	"id" text PRIMARY KEY NOT NULL,
+	"key" text NOT NULL,
+	"count" integer NOT NULL,
+	"lastRequest" bigint NOT NULL,
+	CONSTRAINT "rateLimit_key_unique" UNIQUE("key")
 );
 --> statement-breakpoint
 CREATE TABLE "run_steps" (
@@ -365,18 +363,18 @@ CREATE TABLE "run_steps" (
 --> statement-breakpoint
 CREATE TABLE "session" (
 	"id" text PRIMARY KEY NOT NULL,
-	"expires_at" timestamp with time zone NOT NULL,
+	"expiresAt" timestamp with time zone NOT NULL,
 	"token" text NOT NULL,
-	"ip_address" text,
-	"user_agent" text,
-	"user_id" text NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+	"updatedAt" timestamp with time zone NOT NULL,
+	"ipAddress" text,
+	"userAgent" text,
+	"userId" text NOT NULL,
 	CONSTRAINT "session_token_unique" UNIQUE("token")
 );
 --> statement-breakpoint
 CREATE TABLE "sources" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"id" text PRIMARY KEY NOT NULL,
 	"url" text NOT NULL,
 	"title" text NOT NULL,
 	"provider" text NOT NULL,
@@ -399,26 +397,26 @@ CREATE TABLE "user" (
 	"id" text PRIMARY KEY NOT NULL,
 	"name" text NOT NULL,
 	"email" text NOT NULL,
-	"email_verified" boolean DEFAULT false NOT NULL,
+	"emailVerified" boolean NOT NULL,
 	"image" text,
-	"phone_number" text,
-	"phone_number_verified" boolean DEFAULT false NOT NULL,
-	"city" jsonb,
-	"interests" jsonb DEFAULT '[]'::jsonb NOT NULL,
-	"onboarding_completed" boolean DEFAULT false NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+	"updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
+	"phoneNumber" text,
+	"phoneNumberVerified" boolean,
+	"city" text,
+	"interests" jsonb,
+	"onboardingComplete" boolean,
 	CONSTRAINT "user_email_unique" UNIQUE("email"),
-	CONSTRAINT "user_phone_number_unique" UNIQUE("phone_number")
+	CONSTRAINT "user_phoneNumber_unique" UNIQUE("phoneNumber")
 );
 --> statement-breakpoint
 CREATE TABLE "verification" (
 	"id" text PRIMARY KEY NOT NULL,
 	"identifier" text NOT NULL,
 	"value" text NOT NULL,
-	"expires_at" timestamp with time zone NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+	"expiresAt" timestamp with time zone NOT NULL,
+	"createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+	"updatedAt" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "vote_states" (
@@ -442,29 +440,10 @@ CREATE TABLE "votes" (
 	CONSTRAINT "votes_version_id_user_id_option_id_pk" PRIMARY KEY("version_id","user_id","option_id")
 );
 --> statement-breakpoint
-CREATE TABLE "wallet_connections" (
-	"user_id" text NOT NULL,
-	"provider" text NOT NULL,
-	"auth_enc" text NOT NULL,
-	"status" text NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "wallet_connections_user_id_provider_pk" PRIMARY KEY("user_id","provider")
-);
---> statement-breakpoint
-ALTER TABLE "account" ADD CONSTRAINT "account_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "account" ADD CONSTRAINT "account_userId_user_id_fk" FOREIGN KEY ("userId") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_plan_id_plans_id_fk" FOREIGN KEY ("plan_id") REFERENCES "public"."plans"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "availability_snapshots" ADD CONSTRAINT "availability_snapshots_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "availability_snapshots" ADD CONSTRAINT "availability_snapshots_plan_id_plans_id_fk" FOREIGN KEY ("plan_id") REFERENCES "public"."plans"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "booking_quotes" ADD CONSTRAINT "booking_quotes_plan_id_plans_id_fk" FOREIGN KEY ("plan_id") REFERENCES "public"."plans"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "booking_quotes" ADD CONSTRAINT "booking_quotes_version_id_plan_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."plan_versions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "booking_quotes" ADD CONSTRAINT "booking_quotes_option_id_plan_options_id_fk" FOREIGN KEY ("option_id") REFERENCES "public"."plan_options"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "booking_quotes" ADD CONSTRAINT "booking_quotes_buyer_user_id_user_id_fk" FOREIGN KEY ("buyer_user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "bookings" ADD CONSTRAINT "bookings_plan_id_plans_id_fk" FOREIGN KEY ("plan_id") REFERENCES "public"."plans"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "bookings" ADD CONSTRAINT "bookings_version_id_plan_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."plan_versions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "bookings" ADD CONSTRAINT "bookings_quote_id_booking_quotes_id_fk" FOREIGN KEY ("quote_id") REFERENCES "public"."booking_quotes"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "bookings" ADD CONSTRAINT "bookings_authorization_id_buyer_authorizations_id_fk" FOREIGN KEY ("authorization_id") REFERENCES "public"."buyer_authorizations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "buyer_authorizations" ADD CONSTRAINT "buyer_authorizations_quote_id_booking_quotes_id_fk" FOREIGN KEY ("quote_id") REFERENCES "public"."booking_quotes"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "buyer_authorizations" ADD CONSTRAINT "buyer_authorizations_buyer_user_id_user_id_fk" FOREIGN KEY ("buyer_user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "calendar_connections" ADD CONSTRAINT "calendar_connections_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "calendar_events" ADD CONSTRAINT "calendar_events_plan_id_plans_id_fk" FOREIGN KEY ("plan_id") REFERENCES "public"."plans"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "calendar_events" ADD CONSTRAINT "calendar_events_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -473,12 +452,10 @@ ALTER TABLE "conversation_members" ADD CONSTRAINT "conversation_members_conversa
 ALTER TABLE "conversation_members" ADD CONSTRAINT "conversation_members_messaging_identity_id_messaging_identities_id_fk" FOREIGN KEY ("messaging_identity_id") REFERENCES "public"."messaging_identities"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "conversations" ADD CONSTRAINT "conversations_active_plan_id_plans_id_fk" FOREIGN KEY ("active_plan_id") REFERENCES "public"."plans"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "external_effects" ADD CONSTRAINT "external_effects_plan_id_plans_id_fk" FOREIGN KEY ("plan_id") REFERENCES "public"."plans"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "external_effects" ADD CONSTRAINT "external_effects_quote_id_booking_quotes_id_fk" FOREIGN KEY ("quote_id") REFERENCES "public"."booking_quotes"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "friend_invites" ADD CONSTRAINT "friend_invites_inviter_user_id_user_id_fk" FOREIGN KEY ("inviter_user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "friend_invites" ADD CONSTRAINT "friend_invites_accepted_by_user_id_user_id_fk" FOREIGN KEY ("accepted_by_user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "friendships" ADD CONSTRAINT "friendships_user_low_user_id_fk" FOREIGN KEY ("user_low") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "friendships" ADD CONSTRAINT "friendships_user_high_user_id_fk" FOREIGN KEY ("user_high") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "friendships" ADD CONSTRAINT "friendships_requested_by_user_id_fk" FOREIGN KEY ("requested_by") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "friend_invites" ADD CONSTRAINT "friend_invites_inviter_id_user_id_fk" FOREIGN KEY ("inviter_id") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "friendships" ADD CONSTRAINT "friendships_user_low_id_user_id_fk" FOREIGN KEY ("user_low_id") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "friendships" ADD CONSTRAINT "friendships_user_high_id_user_id_fk" FOREIGN KEY ("user_high_id") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "friendships" ADD CONSTRAINT "friendships_requested_by_user_id_fk" FOREIGN KEY ("requested_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "jobs" ADD CONSTRAINT "jobs_plan_id_plans_id_fk" FOREIGN KEY ("plan_id") REFERENCES "public"."plans"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "messages" ADD CONSTRAINT "messages_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "messages" ADD CONSTRAINT "messages_sender_user_id_user_id_fk" FOREIGN KEY ("sender_user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -508,11 +485,8 @@ ALTER TABLE "private_facts" ADD CONSTRAINT "private_facts_owner_user_id_user_id_
 ALTER TABLE "private_facts" ADD CONSTRAINT "private_facts_plan_id_plans_id_fk" FOREIGN KEY ("plan_id") REFERENCES "public"."plans"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "private_facts" ADD CONSTRAINT "private_facts_source_message_id_messages_id_fk" FOREIGN KEY ("source_message_id") REFERENCES "public"."messages"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "private_facts" ADD CONSTRAINT "private_facts_superseded_by_private_facts_id_fk" FOREIGN KEY ("superseded_by") REFERENCES "public"."private_facts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reimbursements" ADD CONSTRAINT "reimbursements_booking_id_bookings_id_fk" FOREIGN KEY ("booking_id") REFERENCES "public"."bookings"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reimbursements" ADD CONSTRAINT "reimbursements_payer_user_id_user_id_fk" FOREIGN KEY ("payer_user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reimbursements" ADD CONSTRAINT "reimbursements_recipient_user_id_user_id_fk" FOREIGN KEY ("recipient_user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "run_steps" ADD CONSTRAINT "run_steps_run_id_agent_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."agent_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "session" ADD CONSTRAINT "session_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "session" ADD CONSTRAINT "session_userId_user_id_fk" FOREIGN KEY ("userId") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "usage_reservations" ADD CONSTRAINT "usage_reservations_run_id_agent_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."agent_runs"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "vote_states" ADD CONSTRAINT "vote_states_version_id_plan_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."plan_versions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "vote_states" ADD CONSTRAINT "vote_states_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -520,11 +494,21 @@ ALTER TABLE "vote_states" ADD CONSTRAINT "vote_states_favorite_option_id_plan_op
 ALTER TABLE "votes" ADD CONSTRAINT "votes_version_id_plan_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."plan_versions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "votes" ADD CONSTRAINT "votes_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "votes" ADD CONSTRAINT "votes_option_id_plan_options_id_fk" FOREIGN KEY ("option_id") REFERENCES "public"."plan_options"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "wallet_connections" ADD CONSTRAINT "wallet_connections_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "account_userId_idx" ON "account" USING btree ("userId");--> statement-breakpoint
 CREATE INDEX "availability_snapshots_user_id_plan_id_index" ON "availability_snapshots" USING btree ("user_id","plan_id");--> statement-breakpoint
 CREATE INDEX "candidates_cache_key_index" ON "candidates" USING btree ("cache_key");--> statement-breakpoint
 CREATE UNIQUE INDEX "conversations_provider_sending_line_external_chat_id_index" ON "conversations" USING btree ("provider","sending_line","external_chat_id");--> statement-breakpoint
-CREATE INDEX "friend_invites_recipient_phone_digest_index" ON "friend_invites" USING btree ("recipient_phone_digest");--> statement-breakpoint
+CREATE INDEX "friend_invites_recipient" ON "friend_invites" USING btree ("recipient_phone_digest","state");--> statement-breakpoint
+CREATE INDEX "friend_invites_inviter" ON "friend_invites" USING btree ("inviter_id","created_at");--> statement-breakpoint
+CREATE INDEX "friendships_high" ON "friendships" USING btree ("user_high_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "fulfillment_authorizations_plan_id_idx" ON "fulfillment_authorizations" USING btree ("plan_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "fulfillment_bookings_plan_id_idx" ON "fulfillment_bookings" USING btree ("plan_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "fulfillment_changes_plan_id_idx" ON "fulfillment_changes" USING btree ("plan_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "fulfillment_effects_plan_id_idx" ON "fulfillment_effects" USING btree ("plan_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "fulfillment_private_deliveries_plan_id_idx" ON "fulfillment_private_deliveries" USING btree ("plan_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "fulfillment_quotes_plan_id_idx" ON "fulfillment_quotes" USING btree ("plan_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "fulfillment_reimbursements_plan_id_idx" ON "fulfillment_reimbursements" USING btree ("plan_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "fulfillment_reimbursements_booking_id_idx" ON "fulfillment_reimbursements" USING btree ("booking_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "inbound_events_provider_event_id_index" ON "inbound_events" USING btree ("provider","event_id");--> statement-breakpoint
 CREATE INDEX "jobs_state_run_after_index" ON "jobs" USING btree ("state","run_after");--> statement-breakpoint
 CREATE UNIQUE INDEX "messages_conversation_id_provider_message_id_index" ON "messages" USING btree ("conversation_id","provider_message_id");--> statement-breakpoint
@@ -534,4 +518,5 @@ CREATE UNIQUE INDEX "plan_participants_plan_id_user_id_index" ON "plan_participa
 CREATE UNIQUE INDEX "plan_versions_plan_id_version_number_index" ON "plan_versions" USING btree ("plan_id","version_number");--> statement-breakpoint
 CREATE UNIQUE INDEX "polls_conversation_id_provider_message_id_index" ON "polls" USING btree ("conversation_id","provider_message_id");--> statement-breakpoint
 CREATE INDEX "private_facts_owner_user_id_plan_id_index" ON "private_facts" USING btree ("owner_user_id","plan_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "reimbursements_booking_id_payer_user_id_index" ON "reimbursements" USING btree ("booking_id","payer_user_id");
+CREATE INDEX "session_userId_idx" ON "session" USING btree ("userId");--> statement-breakpoint
+CREATE INDEX "verification_identifier_idx" ON "verification" USING btree ("identifier");

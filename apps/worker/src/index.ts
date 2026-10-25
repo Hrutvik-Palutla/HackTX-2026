@@ -1,9 +1,10 @@
 // Durable worker: claims Postgres jobs with leases, runs registered handlers, retries with backoff.
 import { createDb } from '@hacktx/db';
-import { claim, complete, fail, heartbeat, AppError } from '@hacktx/core';
+import { claim, complete, fail, heartbeat, resumeWaitingPlans, AppError } from '@hacktx/core';
 import { createMuse, fixtureDiscovery, handleInbound, runPlanJob, runPollReminder, type InboundJob } from '@hacktx/agent';
 import type { DiscoveryPort, JobKind } from '@hacktx/contracts';
 import { createSerpApiDiscovery } from '../../../packages/discovery/src/index.ts';
+import { startClawMessenger } from '@hacktx/integrations/messaging/claw';
 import { handlers, register, type JobHandler } from './registry';
 
 const { db, pool } = createDb();
@@ -29,8 +30,17 @@ const planHandler: JobHandler = async ({ job }) => {
 };
 register('plan', planHandler);
 register('repair', planHandler);
+// Enqueued by the web app inside Part 1's friend-acceptance transaction (apps/web/lib/part2.ts).
+register('resume_connections', async ({ job }) => {
+  for (const userId of (job.payload as { userIds: string[] }).userIds) await resumeWaitingPlans(db, userId);
+});
 register('poll_reminder', async ({ job }) => { await runPollReminder(db, job.payload as { planId: string; versionId: string }); });
 register('process_inbound', async ({ job }) => { await handleInbound({ db, muse: muse() }, job.payload as InboundJob); });
+
+// Part 3: Claw Messenger iMessage transport delivers outbox messages and polls, and ingests replies.
+const claw = await startClawMessenger({ db });
+if (claw) for (const [kind, handler] of Object.entries(claw.handlers)) register(kind as JobKind, handler as JobHandler);
+else console.warn('[worker] CLAW_MESSENGER_API_KEY/CLAW_MESSENGER_FROM_PHONE not set: outbox messages and polls stay queued');
 
 let stopping = false;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { stopping = true; });
@@ -54,4 +64,5 @@ while (!stopping) {
     clearInterval(beat);
   }
 }
+claw?.stop();
 await pool.end();
