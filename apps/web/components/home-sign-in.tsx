@@ -120,7 +120,7 @@ export function HomeSignIn() {
           </button>
         </div>
       ) : (
-        <p className="home-fine">New here? The same field creates your account. We text you a code; your number stays private.</p>
+        <p className="home-fine">New here? This creates your account. We’ll text you a code.</p>
       )}
     </form>
   );

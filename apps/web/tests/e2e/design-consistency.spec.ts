@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 test('home shows the phone sign-in and all four Anatomy illustrations', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Plans with friends, handled.');
+  await expect(page.getByText('Plans that make it out of the group chat.')).toBeVisible();
   await expect(page.getByLabel('Mobile number')).toBeVisible();
   await expect(page.getByRole('link', { name: /example/i })).toHaveCount(0);
   const figures = page.locator('.home-figure');

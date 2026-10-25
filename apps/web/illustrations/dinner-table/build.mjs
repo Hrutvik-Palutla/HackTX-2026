@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import * as k from "../kit/iso-kit.mjs";
 import * as G from "../kit/lathe.mjs";
 import * as A from "../kit/audit.mjs";
+import { figure, bubbleSvg, MOTION_CSS } from "../kit/figure.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, "../../public/illustrations/dinner-table.svg");
@@ -57,6 +58,8 @@ const P = k.fitProjection(
       [...pointOn(n, CHAIR_BACK + LEG, 20), POST_TOP + 1.4],
     ]),
     [0, 0, flameTop],
+    ...SIDES.map((n) => [...pointOn(n, 60, 0), 128]),
+    [...pointOn([0, -1], 56, 0), 172],
   ],
   WIDTH,
   HEIGHT,
@@ -555,15 +558,38 @@ for (const [x, y, holes] of [
   item("centre.dish", [x, y, TABLE + 3.5], svg, [A.solid(F, bowl), A.solid(F, LID, { radius: lid }), A.ball(knobAt, 0.9)]);
 }
 
+
+// ---------------------------------------------------------------- the four friends, mid-conversation
+const HIP_A = 64;
+const HIP_Z = SEAT_Z + SEAT_H;
+const on = (n, a, b, z) => [...pointOn(n, a, b), z];
+const DINERS = [
+  // near right (back to us): leaning back, laughing, hands on the table edge
+  { n: [1, 0], lean: -0.12, hands: (n) => [on(n, 54, -16, TABLE + 1.5), on(n, 54, 16, TABLE + 1.5)] },
+  // near left (back to us): reaching for the wine
+  { n: [0, 1], lean: 0.16, hair: "bun", hands: (n) => [on(n, 52, -14, TABLE + 1.5), on(n, 22, 10, TABLE + 14)] },
+  // far left, facing us: listening, chin on hand, reaching for the bread
+  { n: [-1, 0], lean: 0.2, hair: "bun", hands: (n) => [on(n, 18, -8, TABLE + 4), on(n, 47, 3, HIP_Z + 56)] },
+  // far right, facing us: telling the story, one hand up
+  { n: [0, -1], lean: 0.1, hands: (n) => [on(n, 52, -14, TABLE + 1.5), on(n, 50, 27, TABLE + 36)], talking: true },
+];
+let speakerHead = null;
+DINERS.forEach((d, index) => {
+  const hip = on(d.n, HIP_A, 0, HIP_Z);
+  const parts = figure(P, { id: `diner${index}`, hip, facing: [-d.n[0], -d.n[1]], hands: d.hands(d.n), lean: d.lean, hair: d.hair ?? "none", floor: FLOOR + 4 });
+  for (const part of parts) item(part.name, part.at, part.svg, part.shapes);
+  if (d.talking) speakerHead = parts.find((part) => part.name.endsWith(".head")).at;
+});
+
 // ---------------------------------------------------------------- assemble
 A.settle(R, P);
 if (process.argv.includes("--sizes")) { const by = {}; for (const it of R.items) { const b = it.name.split("#")[0]; by[b] = (by[b] ?? 0) + it.svg.length; } console.log(Object.entries(by).sort((a, b) => b[1] - a[1]).map(([n, v]) => `${n} ${(v / 1024).toFixed(1)}K`).join("\n"), "\nback", (back.join("").length / 1024).toFixed(1) + "K"); }
 R.items.sort((a, b) => a.key - b.key);
-const body = [...back, ...R.items.map((entry) => entry.svg)];
+const body = [MOTION_CSS, ...back, ...R.items.map((entry) => entry.svg), bubbleSvg(P, [speakerHead[0], speakerHead[1], speakerHead[2] + 12])];
 const svg = k.figureSvg({
   width: WIDTH,
   height: HEIGHT,
-  label: "A wooden dinner table set for four on a rug: four ladder-back chairs pulled in, plates, cutlery, napkins and wine glasses at each place, with a lit candle, a loaf on a bread board, a bottle of wine and a covered dish in the middle.",
+  label: "Four friends talking over dinner at a wooden table: one telling a story with a hand raised, one leaning back laughing, one reaching for the wine and one listening with chin on hand, around a candle, bread and a covered dish.",
   body,
   standalone: "light",
 });

@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import * as k from "../kit/iso-kit.mjs";
 import * as G from "../kit/lathe.mjs";
 import * as A from "../kit/audit.mjs";
+import { spinFrames, MOTION_CSS } from "../kit/figure.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, "../../public/illustrations/movie-camera.svg");
@@ -665,29 +666,36 @@ REEL.x.forEach((cx, index) => {
   disc(`${owner}.pack`, F, REEL_Y.pack, REEL_Y.front, pack, { tone: "hi", owner, crease: "lo" });
   // front flange with five windows. Through each window: the back flange's inner face, the film
   // pack's side (wound turns as faint rings), and the window's own wall.
-  const wins = windows(8.6, REEL.r - 4, 4.4, 5, (index ? 18 : -8) * DEG);
   const face = REEL_Y.face;
   const toScreen = (s) => (list) => pathOf(list.map(([u, v]) => at(G.pointOf(F, s, Math.hypot(u, v), Math.atan2(v, u)))), true);
-  const front = wins.map(toScreen(face)).join("");
-  const wall = wins.map(toScreen(REEL_Y.front)).join("");
-  const clip = `mc-reel-${index}`;
-  SVG_DEFS.push(`<clipPath id="${clip}"><path d="${front}"/></clipPath>`);
   const turns = [];
   for (let r = pack - 2.2; r > 8; r -= 2.6) turns.push(G.circleOf(F, REEL_Y.front, r, P));
-  const seen =
-    `<g clip-path="url(#${clip})">` +
-    `<path class="iso-shade" data-shade="2" d="${front}"/>` +
-    `<path class="iso-shade" data-shade="0" d="${G.circleOf(F, REEL_Y.front, pack, P)}"/>` +
-    Ln(turns.join(""), { tone: "faint" }) +
-    Ln(G.circleOf(F, REEL_Y.front, pack, P), { tone: "lo" }) +
-    Ln(wall, { tone: "lo" }) +
-    `</g>` +
-    Ln(front, { tone: "hi" });
-  const rivets = Array.from({ length: 5 }, (_, j) => (index ? 18 : -8) * DEG + (j / 5) * TAU).map((t) => at(G.pointOf(F, face, REEL.r - 2, t)));
+  // The reel turns: each frame redraws the windows and rivets 12 degrees on (five windows repeat every 72).
+  const frameAt = (step) => {
+    const phase = (index ? 18 : -8) * DEG - step * 12 * DEG;
+    const wins = windows(8.6, REEL.r - 4, 4.4, 5, phase);
+    const front = wins.map(toScreen(face)).join("");
+    const wall = wins.map(toScreen(REEL_Y.front)).join("");
+    const clip = `mc-reel-${index}-${step}`;
+    SVG_DEFS.push(`<clipPath id="${clip}"><path d="${front}"/></clipPath>`);
+    const rivets = Array.from({ length: 5 }, (_, j) => phase + (j / 5) * TAU).map((t) => at(G.pointOf(F, face, REEL.r - 2, t)));
+    return (
+      `<g clip-path="url(#${clip})">` +
+      `<path class="iso-shade" data-shade="2" d="${front}"/>` +
+      `<path class="iso-shade" data-shade="0" d="${G.circleOf(F, REEL_Y.front, pack, P)}"/>` +
+      Ln(turns.join(""), { tone: "faint" }) +
+      Ln(G.circleOf(F, REEL_Y.front, pack, P), { tone: "lo" }) +
+      Ln(wall, { tone: "lo" }) +
+      `</g>` +
+      Ln(front, { tone: "hi" }) +
+      Dots(rivets, { size: 0.45 })
+    );
+  };
+  const seen = spinFrames(frameAt);
   disc(`${owner}.front`, F, REEL_Y.front, face, REEL.r, {
     tone: "hi",
     owner,
-    extra: seen + Ln(G.circleOf(F, face, REEL.r - 2, P), { tone: "faint" }) + Dots(rivets, { size: 0.45 }),
+    extra: seen + Ln(G.circleOf(F, face, REEL.r - 2, P), { tone: "faint" }),
   });
   disc(`${owner}.hub`, F, face, REEL_Y.hub, 5.6, { tone: "hi", owner, extra: Dots(G.dotsOf(F, REEL_Y.hub, 4.3, 3, P, { all: true, phase: 0.5 }), { size: 0.4 }) });
   disc(`${owner}.nut`, F, REEL_Y.hub, REEL_Y.nut, 3.2, {
@@ -735,7 +743,7 @@ A.settle(R, P);
 R.items.sort((a, b) => a.key - b.key);
 A.auditOrExit(R, P);
 
-const body = [`<defs>${SVG_DEFS.join("")}</defs>`, halo, ...R.items.map((item) => item.svg), ...AFTER];
+const body = [MOTION_CSS, `<defs>${SVG_DEFS.join("")}</defs>`, halo, ...R.items.map((item) => item.svg), ...AFTER];
 const svg = k.figureSvg({
   width: W,
   height: H,

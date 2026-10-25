@@ -358,7 +358,7 @@ export function MuseApp({
         plans: "Current Plans",
         friends: "Friends",
         settings: "Settings",
-        detail: plan?.title ?? "Plan",
+        detail: plan?.title ?? plan?.request ?? "Plan",
         private: "Private details",
         payment: "Your share",
         studio: "Studio",
@@ -786,13 +786,8 @@ export function MuseApp({
               {["detail", "private", "payment"].includes(view) && plan && (
                 <>
                   <PlanNavigation id={id!} view={view} />
-                  <p>{plan.request}</p>
-                  <p className="hint">
-                    {planStatusLabel(plan.status)} ·{" "}
-                    {plan.mode === "test"
-                      ? "Test mode: no automatic purchases"
-                      : "Your group’s plan"}
-                  </p>
+                  {plan.title && <p>{plan.request}</p>}
+                  {plan.mode === "test" && <p className="hint">Test mode: no automatic purchases</p>}
                   {view === "detail" && (
                     <div className="plan-layout">
                       <div className="plan-main">

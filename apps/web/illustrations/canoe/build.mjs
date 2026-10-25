@@ -23,8 +23,15 @@ import {
   hullOutward,
   gunwalePoint,
   uOf,
+  B0,
+  C0,
+  E_A,
+  BOW_SEAT,
+  MID_SEAT,
+  STERN_SEAT,
 } from "./geometry.mjs";
 import { surfaceOf, surfaceSvg, polyD } from "./surface.mjs";
+import { figure, MOTION_CSS } from "../kit/figure.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, "../../public/illustrations/canoe.svg");
@@ -132,12 +139,76 @@ function hullNear() {
   return surfaceSvg(outer, { tone: "hi", inner: L(planks.join(""), { tone: "faint" }) });
 }
 
+
+// ---------- the three paddlers ----------
+// Bow and stern paddle on the near side, the middle paddler on the far side: everyone mid-stroke.
+const U = 0.46;
+const CREW = [
+  { a: BOW_SEAT, side: 1, reach: 10 },
+  { a: MID_SEAT, side: -1, reach: 6 },
+  { a: STERN_SEAT, side: 1, reach: 2 },
+];
+const paddleOf = ({ a, side, reach }) => {
+  const grip = local(a + reach - 4, C0 + side * 5, 30);
+  const tip = local(a + reach + 10, C0 + side * (B0 + 10), -8);
+  const bladeFrom = G.lerp3(grip, tip, 0.66);
+  const lower = G.lerp3(grip, tip, 0.42);
+  return { grip, tip, bladeFrom, lower };
+};
+function paddleSvg(crew) {
+  const { grip, tip, bladeFrom } = paddleOf(crew);
+  const dir = G.unit3(G.sub3(tip, grip));
+  const across = G.mul3(G.unit3(G.cross3(dir, G.cross3(E_A, dir))), 2.6);
+  const blade = [];
+  for (let i = 0; i <= 12; i++) {
+    const t = i / 12;
+    const w = Math.sin(Math.PI * Math.min(1, t * 1.6 + 0.08)) * (t > 0.85 ? 1 - (t - 0.85) * 2.4 : 1);
+    blade.push(G.add3(G.lerp3(bladeFrom, tip, t), G.mul3(across, Math.max(0.35, w))));
+  }
+  const back = blade.map((p, i) => G.sub3(G.mul3(G.lerp3(bladeFrom, tip, i / 12), 2), p)).reverse();
+  const ring = [...blade, ...back];
+  const d = path3(ring, true);
+  const shaft = L(path3([G.add3(grip, G.mul3(dir, -1.5)), bladeFrom]), { tone: "hi" });
+  return shaft + `<path class="iso-fill" d="${d}"/><path class="iso-shade" data-shade="1" d="${d}"/>` + L(d, { tone: "hi" }) + L(path3([bladeFrom, G.lerp3(bladeFrom, tip, 0.85)]), { tone: "faint" });
+}
+function ripples(crew) {
+  const { tip } = paddleOf(crew);
+  const [cx, cy] = [tip[0], tip[1]];
+  return [0, 1.6].map((delay) => k.lineSvg(k.ring(cx, cy, 7, WATER, P, 40), { tone: "lo", className: "sq-ripple" }).replace("<path ", `<path style="animation-delay:${delay}s" `)).join("");
+}
+function paddler(crew, index) {
+  const { grip, lower } = paddleOf(crew);
+  const hands = crew.side > 0 ? [lower, grip] : [grip, lower];
+  const parts = figure(P, { id: `paddler${index}`, hip: local(crew.a, C0, WATER - 1), facing: E_A, u: U, hands, lean: 0.18, legs: "none", hair: index === 1 ? "bun" : "none" });
+  return parts.sort((x, y) => k.depthOf(x.at, P) - k.depthOf(y.at, P)).map((part) => part.svg).join("");
+}
+const wake = (c, from, to) => L(path3([local(from, c, WATER), local(to, c, WATER)]), { tone: "faint", flow: true });
+
 // ---------- assemble ----------
-const body = [plinth(), ground(), banks("far"), hullInterior(), hullNear(), banks("near")];
+const far = CREW.filter((c) => c.side < 0);
+const near = CREW.filter((c) => c.side > 0);
+const body = [
+  MOTION_CSS,
+  plinth(),
+  ground(),
+  banks("far"),
+  wake(-25, -20, -95),
+  wake(-31, 50, -10),
+  ...far.map(ripples),
+  hullInterior(),
+  ...far.map(paddleSvg),
+  ...CREW.map(paddler),
+  hullNear(),
+  wake(24, -60, -120),
+  wake(30, 30, -30),
+  ...near.map(ripples),
+  ...near.map(paddleSvg),
+  banks("near"),
+];
 const svg = k.figureSvg({
   width: WIDTH,
   height: HEIGHT,
-  label: "A model of three friends paddling a wooden canoe down a short stretch of river, on a wooden base with banks, rocks, reeds and a small dock.",
+  label: "Three friends paddling a wooden canoe down a river, mid-stroke, on a wooden base with layered banks.",
   body,
   standalone: "light",
 });

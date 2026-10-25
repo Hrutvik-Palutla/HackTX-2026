@@ -2,7 +2,13 @@
 
 Each owner keeps their own section current: status, files, what actually works + the check run, blockers, next action.
 
-## Chat-first feature pass — ready for review; not deployed (October 25)
+## Illustrations with people + homepage day layout (October 25)
+
+- `apps/web/illustrations/kit/figure.mjs` (new): turned-wood figurines (lathe torso, ball head, tube limbs), a typing-dots bubble, and shared motion CSS (reduced-motion safe). Dinner table: four diners mid-conversation (storyteller with a raised hand and animated typing bubble, one laughing, one reaching for wine, one chin-on-hand). Canoe: three paddlers mid-stroke with blades, ripples and slow wake lines (its old label promised paddlers that were never drawn). Movie camera: reels turn via six honest rotation frames. Record player: notes drift up. Rebuild with `node apps/web/illustrations/<name>/build.mjs`.
+- Homepage: tagline under the logo ("Plans that make it out of the group chat."), scenes arranged as a day in reading order (9:00 Paddle, 1:30 Records, 7:15 Late show, 9:30 Dinner), tighter copy. Plan page title uses the request instead of "Plan".
+- Checks: root + web typecheck, `next build`, full Playwright suite (desktop + mobile) 40/40 with one cold-compile flake that passes on rerun.
+
+## Chat-first feature pass — ready for review (October 25)
 
 - Branch `design/chat-first-features` (from `design/chat-first-preview` @ 4bb4cf8). Files: `apps/web/app/{page.tsx,globals.css}`, `apps/web/components/{plan-parts.tsx (new),muse-app.tsx,plan-chat-panel.tsx,standout-panel.tsx}`, `apps/web/lib/views.ts`, `apps/web/tests/e2e/plan-surface.spec.ts` (new).
 - Works (against mocked API responses only): homepage logo enlarged and figures moved from corners into staggered flanks; plan page puts options + live chat side by side (≥1180px), with a lifecycle stepper, next-action card, option cards (local time/zone, price provenance, unknowns, sources beside each option, per-member vote bar), "updated options" notice, agreed plan with itinerary from recorded `timeline`, own-calendar add (`POST /calendar`) and ICS download, and a "Something changed?" path (private facts / chat; booked plans use `change-requests`). Private page adds manual availability (`PUT /private` availability fact, UTC in plan zone, day-track diagram) and a spending limit. Dashboard lists plans first with status, avatars and "vote needed"; interests moved below. Common Ground shows a shared-interest diagram. Chat: timestamps, Sid styling, polite announcements of new messages only, retry, Ctrl+Enter. Leftover violet colors mapped to paper/ink/gold. Activities copy no longer says checkout is always required.

@@ -7,7 +7,6 @@ export const viewDescriptions: Record<string, string> = {
   plans: "Your group’s plans, votes and messages.",
   friends: "Friends who can plan with you.",
   settings: "Your profile, calendar and account.",
-  detail: "Choose every option that works, then pick a favorite.",
   private: "Notes for Sid that your friends can’t see.",
   payment: "Review your share and payment status.",
   studio: "Edit Sid’s instructions and review what happened.",

@@ -9,6 +9,7 @@ import * as k from "../kit/iso-kit.mjs";
 import * as G from "../kit/lathe.mjs";
 import * as A from "../kit/audit.mjs";
 import { tubePieces, tubeSvg } from "../kit/tube.mjs";
+import { MOTION_CSS } from "../kit/figure.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, "../../public/illustrations/record-player.svg");
@@ -463,8 +464,21 @@ SLEEVES.forEach((sleeve, index) => {
 // ---------------------------------------------------------------- settle the painter's order, write the SVG
 A.settle(R, P);
 const items = R.items.slice().sort((a, b) => a.key - b.key);
-const LABEL = "A record player on a wooden plinth with four feet: the record turning under an S-shaped tonearm with its counterweight, headshell and cue lever, a speed selector knob and pitch fader on the deck, the dust cover propped open behind on two hinges, and a small stack of LP sleeves beside it.";
-const svg = k.figureSvg({ width: W, height: H, label: LABEL, body: [...halos, ...items.map((item) => item.svg)], standalone: "light" });
+const LABEL = "A record playing on a turntable, music notes drifting up: a record player on a wooden plinth with four feet: the record turning under an S-shaped tonearm with its counterweight, headshell and cue lever, a speed selector knob and pitch fader on the deck, the dust cover propped open behind on two hinges, and a small stack of LP sleeves beside it.";
+// Music drifting up off the record: three notes in screen space, staggered.
+const [nx, ny] = k.iso([SX, SY, RECORD_TOP], P);
+const NOTE = (x, y, s, double) =>
+  `<g transform="translate(${x.toFixed(1)},${y.toFixed(1)}) scale(${s})"><ellipse cx="0" cy="0" rx="3.4" ry="2.4" transform="rotate(-22)" fill="#a3834f"/>` +
+  (double
+    ? `<ellipse cx="9" cy="-3" rx="3.4" ry="2.4" transform="rotate(-22 9 -3)" fill="#a3834f"/><path d="M3,-1V-15L12,-18V-4" fill="none" stroke="#a3834f" stroke-width="1.2"/>`
+    : `<path d="M3,-1V-15q5,2 6,8" fill="none" stroke="#a3834f" stroke-width="1.2"/>`) +
+  `</g>`;
+const notes = [
+  [nx - 22, ny - 34, 1.5, false, 0],
+  [nx + 6, ny - 48, 1.6, true, 1.6],
+  [nx + 32, ny - 30, 1.35, false, 3.2],
+].map(([x, y, s, d, delay]) => `<g class="sq-note" style="animation-delay:${delay}s">${NOTE(x, y, s, d)}</g>`).join("");
+const svg = k.figureSvg({ width: W, height: H, label: LABEL, body: [MOTION_CSS, ...halos, ...items.map((item) => item.svg), notes], standalone: "light" });
 mkdirSync(dirname(OUT), { recursive: true });
 writeFileSync(OUT, svg);
 const preview = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Record player</title><style>html,body{margin:0;background:#fbfbfa}body{padding:24px 16px}.stage{max-width:720px;margin:0 auto}</style></head><body><div class="stage">${svg}</div></body></html>`;
