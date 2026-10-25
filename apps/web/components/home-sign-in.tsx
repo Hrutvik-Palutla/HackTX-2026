@@ -120,7 +120,10 @@ export function HomeSignIn() {
           </button>
         </div>
       ) : (
-        <p className="home-fine">New here? This creates your account. We’ll text you a code.</p>
+        <>
+          <p className="home-fine">New here? This creates your account. We’ll text you a code.</p>
+          <a className="home-try" href="/try">Try a demo adventure →</a>
+        </>
       )}
     </form>
   );

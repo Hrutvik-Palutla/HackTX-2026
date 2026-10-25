@@ -13,6 +13,7 @@ import { PlanNavigation } from "./plan-navigation";
 import { Feedback } from "./feedback";
 import { PlanChatPanel } from './plan-chat-panel';
 import { DropNotebook, CommonGroundPicker, QuestPanel, RecipeEditor, type Ground } from "./standout-panel";
+import { BadgeGrid } from "./badges";
 import { AgreedPlan, AvailabilityEditor, AvailabilityFact, Avatars, Figure, NextAction, OptionCard, PlanJourney, SomethingChanged, SpendingLimitEditor, stageOf } from "./plan-parts";
 import { api, accountApi, ApiError } from "@/lib/api";
 import {
@@ -483,6 +484,15 @@ export function MuseApp({
                   >
                     Disconnect calendar
                   </button>
+                </section>
+              )}
+              {!onboarding && !authView && (
+                <section className="panel">
+                  <span className="eyebrow">Our adventures</span>
+                  <h2>Badges</h2>
+                  <p>Earned with friends when at least two of you confirm an outing. Nothing for streaks or spending.</p>
+                  <BadgeGrid progress={{}} />
+                  <p className="hint">Outing confirmations are coming to live plans next. <Link className="inline-link" href="/try">See how badges work in the demo</Link>.</p>
                 </section>
               )}
               <section className="panel">

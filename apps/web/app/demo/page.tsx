@@ -1,2 +1,5 @@
-import { redirect } from 'next/navigation';
-export default function OldDemoLink() { redirect('/'); }
+import { redirect } from "next/navigation";
+
+export default function DemoPage() {
+  redirect("/try");
+}

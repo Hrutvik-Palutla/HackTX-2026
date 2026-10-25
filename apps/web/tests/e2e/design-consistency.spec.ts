@@ -14,10 +14,21 @@ test('home shows the phone sign-in and all four Anatomy illustrations', async ({
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test('old mock example URLs return to the real home page', async ({ page }) => {
-  for (const path of ['/try', '/demo']) {
-    await page.goto(path);
-    await expect(page).toHaveURL('/');
-    await expect(page.getByRole('heading', { name: 'Plans with friends, handled.' })).toBeVisible();
+test('the demo is clearly labeled, makes no API calls and awards badges once per run', async ({ page }) => {
+  const api: string[] = [];
+  page.on('request', (r) => { if (new URL(r.url()).pathname.startsWith('/api/')) api.push(r.url()); });
+  await page.goto('/demo');
+  await expect(page).toHaveURL('/try');
+  await expect(page.getByText('Demo · fictional friends · no real bookings or posts')).toBeVisible();
+  for (let run = 0; run < 2; run++) {
+    await page.getByRole('button', { name: /Earlier outings/ }).click();
+    await page.getByRole('tab', { name: /Badges/ }).click();
+    await expect(page.getByRole('button', { name: /^Out the Door\. Earned/ })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: /^Again Soon\. Earned/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Fresh Air\. 1 of 2/ })).toBeVisible();
+    await page.getByRole('button', { name: 'Reset demo' }).click();
+    await expect(page.getByRole('heading', { name: 'Plan something' })).toBeVisible();
   }
+  expect(api).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
