@@ -13,6 +13,7 @@ import { PlanNavigation } from "./plan-navigation";
 import { Feedback } from "./feedback";
 import { PlanChatPanel } from './plan-chat-panel';
 import { DropNotebook, CommonGroundPicker, QuestPanel, RecipeEditor, type Ground } from "./standout-panel";
+import { AgreedPlan, AvailabilityEditor, AvailabilityFact, Avatars, Figure, NextAction, OptionCard, PlanJourney, SomethingChanged, SpendingLimitEditor, stageOf } from "./plan-parts";
 import { api, accountApi, ApiError } from "@/lib/api";
 import {
   money,
@@ -99,6 +100,7 @@ export function MuseApp({
   const [request, setRequest] = useState("");
   const [selectedFriends, setSelectedFriends] = useState<string[]>([]);
   const [commonGround, setCommonGround] = useState<Ground | null>(null);
+  const [revised, setRevised] = useState(false);
   const loadSession = useCallback(async () => {
     try {
       const response = await fetch("/api/auth/get-session", {
@@ -219,6 +221,37 @@ export function MuseApp({
   useEffect(() => {
     void loadData();
   }, [loadData]);
+  // Remember the last option set seen per plan, so a revision is announced instead of looking unchanged.
+  useEffect(() => {
+    if (!id || !plan?.activeVersionId) return;
+    try {
+      const key = `sq:seen-version:${id}`;
+      const seen = localStorage.getItem(key);
+      setRevised(Boolean(seen && seen !== plan.activeVersionId));
+      localStorage.setItem(key, plan.activeVersionId);
+    } catch {
+      /* storage unavailable: no revision banner */
+    }
+  }, [id, plan?.activeVersionId]);
+  // Keep an open plan current. A new option set replaces local selections; otherwise unsaved choices stay.
+  useEffect(() => {
+    if (view !== "detail" || !id || status !== "ready") return;
+    const timer = setInterval(() => {
+      if (document.hidden) return;
+      void api<PlanView>(`/plans/${encodeURIComponent(id)}`)
+        .then((next) =>
+          setPlan((cur) => {
+            if (!cur || next.activeVersionId !== cur.activeVersionId) {
+              queueMicrotask(() => applyPlan(next));
+              return cur;
+            }
+            return next.revision !== cur.revision || next.status !== cur.status || next.votes.length !== cur.votes.length || next.decision?.optionId !== cur.decision?.optionId ? next : cur;
+          }),
+        )
+        .catch(() => undefined);
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [view, id, status, applyPlan]);
   async function perform(action: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -468,38 +501,64 @@ export function MuseApp({
               {dataLoading && <p role="status">Loading…</p>}
               {view === "plans" && (
                 <>
-                  <DropNotebook />
                   <div className="dashboard-grid">
                     <div>
                       <div className="section-title">
                         <h2>Your plans</h2>
                         <span>{plans?.length ?? 0} VISIBLE</span>
                       </div>
-                      {plans?.map((p) => (
-                        <Link
-                          className="plan live-plan"
-                          href={`/plans/${encodeURIComponent(p.id)}`}
-                          key={p.id}
-                        >
-                          <div className="plan-content">
-                            <div className="plan-top">
-                              <span className="plan-status">
-                                {p.status.replaceAll("_", " ")}
-                              </span>
-                              <span>{p.mode === "test" ? "TEST" : "LIVE"}</span>
+                      {plans?.map((p) => {
+                        const voted = p.votes
+                          .filter((v) => v.versionId === p.activeVersionId)
+                          .map((v) => v.userId);
+                        const needsVote =
+                          p.status === "voting" &&
+                          !voted.includes(session?.user.id ?? "");
+                        return (
+                          <Link
+                            className={`plan live-plan${needsVote ? " needs-you" : ""}`}
+                            href={`/plans/${encodeURIComponent(p.id)}`}
+                            key={p.id}
+                          >
+                            <div className="plan-content">
+                              <div className="plan-top">
+                                <span className="plan-status">
+                                  {planStatusLabel(p.status)}
+                                </span>
+                                <span>{p.mode === "test" ? "TEST" : "LIVE"}</span>
+                              </div>
+                              <h2>{p.title ?? p.request}</h2>
+                              <div className="plan-people">
+                                <Avatars people={p.participants} voted={voted} />
+                                <p>
+                                  {p.participants
+                                    .map((person) => person.name)
+                                    .join(", ")}
+                                </p>
+                              </div>
+                              <div className="plan-bottom">
+                                <span>
+                                  {needsVote
+                                    ? "Your vote is needed"
+                                    : p.status === "voting"
+                                      ? `${voted.length} of ${p.participants.length} voted`
+                                      : stageOf(p.status) === 3
+                                        ? "Agreed · add it to your calendar"
+                                        : p.options.length
+                                          ? `${p.options.length} options`
+                                          : "Options on the way"}
+                                </span>
+                                <span className="vote-link">View plan →</span>
+                              </div>
                             </div>
-                            <h2>{p.title ?? p.request}</h2>
-                            <p>
-                              {p.participants
-                                .map((person) => person.name)
-                                .join(", ")}
-                            </p>
-                            <span className="vote-link">View plan →</span>
-                          </div>
-                        </Link>
-                      ))}
+                          </Link>
+                        );
+                      })}
                       {plans?.length === 0 && (
-                        <p>No plans yet. Start one below.</p>
+                        <div className="panel empty-state with-figure">
+                          <Figure name="canoe" />
+                          <p>No plans yet. Start one with the form: say what you’d like to do and pick friends to invite.</p>
+                        </div>
                       )}
                     </div>
                     <aside>
@@ -570,6 +629,9 @@ export function MuseApp({
                       </form>
                     </aside>
                   </div>
+                  <div className="interests-section">
+                    <DropNotebook />
+                  </div>
                 </>
               )}
               {view === "friends" && (
@@ -594,7 +656,10 @@ export function MuseApp({
                     ))}
                   </ul>
                   {friends?.friends.length === 0 && (
-                    <p>No friends connected yet.</p>
+                    <div className="empty-state with-figure">
+                      <Figure name="dinner-table" />
+                      <p>No friends connected yet. Invite someone by phone below; they accept with their own verified number.</p>
+                    </div>
                   )}
                   <section className="panel">
                     <h2>Incoming requests</h2>
@@ -729,118 +794,120 @@ export function MuseApp({
                       : "Your group’s plan"}
                   </p>
                   {view === "detail" && (
-                    <>
-                      <form
-                        className="form-panel"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          void perform(async () => {
-                            await api(`${base}/vote`, {
-                              method: "PUT",
-                              body: JSON.stringify({
-                                versionId: plan.activeVersionId,
-                                acceptableOptionIds: acceptable,
-                                favoriteOptionId: favorite || null,
-                                noneAcceptable: none,
-                              }),
-                            });
-                            await loadData();
-                            setNotice("Vote saved to the current plan.");
-                          });
-                        }}
-                      >
-                        <fieldset
-                          disabled={
-                            busy ||
-                            !plan.activeVersionId ||
-                            plan.status !== "voting"
-                          }
-                        >
-                          <legend>
-                            Choose all options that work, then a favorite
-                          </legend>
-                          {plan.options.map((o) => (
-                            <div className="option-row" key={o.id}>
-                              <label className="choice">
-                                <input
-                                  type="checkbox"
-                                  checked={acceptable.includes(o.id)}
-                                  onChange={(e) => {
-                                    setNone(false);
-                                    setAcceptable((v) =>
-                                      e.target.checked
-                                        ? [...v, o.id]
-                                        : v.filter((id) => id !== o.id),
-                                    );
-                                    if (!e.target.checked && favorite === o.id)
-                                      setFavorite("");
-                                  }}
-                                />
-                                {o.label}. {o.title}
-                              </label>
-                              <p>
-                                {o.startAt ? new Date(o.startAt).toLocaleString("en-US", {
-                                  timeZone: o.timeZone,
-                                }) : "Time unknown — check showtimes"}{" "}
-                                ({o.timeZone}) · {money(o.estimatedPerPerson)} ·{" "}
-                                {o.priceKind}
-                              </p>
-                              <p>{o.publicExplanation}</p>
-                              {o.uncertainties.map((u) => (
-                                <p className="hint" key={u}>
-                                  {u}
-                                </p>
-                              ))}
-                              <label className="choice">
-                                <input
-                                  type="radio"
-                                  name="favorite"
-                                  checked={favorite === o.id}
-                                  disabled={!acceptable.includes(o.id)}
-                                  onChange={() => setFavorite(o.id)}
-                                />
-                                My favorite
-                              </label>
+                    <div className="plan-layout">
+                      <div className="plan-main">
+                        <a className="back jump-chat" href="#group-chat">Jump to the group chat ↓</a>
+                        <PlanJourney status={plan.status} />
+                        <NextAction plan={plan} userId={session!.user.id} />
+                        {revised && plan.status === "voting" && (
+                          <p className="feedback revised">Review the updated options. Earlier votes were for the previous options and don’t carry over.</p>
+                        )}
+                        <AgreedPlan plan={plan} planId={id!} />
+                        <section id="options" className="options-section" aria-labelledby="options-title">
+                          <div className="section-title">
+                            <h2 id="options-title">{stageOf(plan.status) >= 3 ? "How the group voted" : "Options"}</h2>
+                            <span className="voters">
+                              <Avatars
+                                people={plan.participants}
+                                voted={plan.votes.filter((v) => v.versionId === plan.activeVersionId).map((v) => v.userId)}
+                              />
+                              {plan.votes.filter((v) => v.versionId === plan.activeVersionId).length} of {plan.participants.length} voted
+                            </span>
+                          </div>
+                          {!plan.options.length ? (
+                            <div className="panel empty-state with-figure">
+                              <Figure name="movie-camera" />
+                              <p>Sid hasn’t shared options yet. Up to three will appear here, each with its time, cost and sources.</p>
                             </div>
-                          ))}
-                          <label className="choice">
-                            <input
-                              type="checkbox"
-                              checked={none}
-                              onChange={(e) => {
-                                setNone(e.target.checked);
-                                if (e.target.checked) {
-                                  setAcceptable([]);
-                                  setFavorite("");
-                                }
+                          ) : (
+                            <form
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                void perform(async () => {
+                                  await api(`${base}/vote`, {
+                                    method: "PUT",
+                                    body: JSON.stringify({
+                                      versionId: plan.activeVersionId,
+                                      acceptableOptionIds: acceptable,
+                                      favoriteOptionId: favorite || null,
+                                      noneAcceptable: none,
+                                    }),
+                                  });
+                                  await loadData();
+                                  setNotice("Vote saved to the current plan.");
+                                });
                               }}
-                            />
-                            None of these work
-                          </label>
-                          <button disabled={!none && !acceptable.length}>
-                            Save vote
-                          </button>
-                        </fieldset>
-                      </form>
-                      <section className="panel">
-                        <h2>Sources</h2>
-                        {!plan.sources.length && <p>No sources reported.</p>}
-                        {plan.sources.map((source) => {
-                          const url = safeUrl(source.url);
-                          return url ? (
-                            <p key={source.id}>
-                              <a href={url} target="_blank" rel="noreferrer">
-                                {source.title} ↗
-                              </a>
-                            </p>
-                          ) : null;
-                        })}
-                      </section>
-                      <PlanChatPanel planId={id!} />
-                      {['selected', 'quoting', 'awaiting_payment_approval', 'booking', 'needs_handoff', 'handoff', 'booked'].includes(plan.status) && <details><summary>Photo challenges and riddles (optional)</summary><QuestPanel planId={id!} userId={session!.user.id} status={plan.status} /></details>}
-                    </>
+                            >
+                              <fieldset
+                                disabled={
+                                  busy ||
+                                  !plan.activeVersionId ||
+                                  plan.status !== "voting"
+                                }
+                              >
+                                <legend>
+                                  Choose all options that work, then a favorite
+                                </legend>
+                                <div className="option-grid">
+                                  {plan.options.map((o) => (
+                                    <OptionCard
+                                      key={o.id}
+                                      option={o}
+                                      plan={plan}
+                                      acceptable={acceptable.includes(o.id)}
+                                      favorite={favorite === o.id}
+                                      onAcceptable={(checked) => {
+                                        setNone(false);
+                                        setAcceptable((v) =>
+                                          checked ? [...v, o.id] : v.filter((x) => x !== o.id),
+                                        );
+                                        if (!checked && favorite === o.id) setFavorite("");
+                                      }}
+                                      onFavorite={() => setFavorite(o.id)}
+                                    />
+                                  ))}
+                                </div>
+                                <div className="vote-actions">
+                                  <label className="choice">
+                                    <input
+                                      type="checkbox"
+                                      checked={none}
+                                      onChange={(e) => {
+                                        setNone(e.target.checked);
+                                        if (e.target.checked) {
+                                          setAcceptable([]);
+                                          setFavorite("");
+                                        }
+                                      }}
+                                    />
+                                    None of these work
+                                  </label>
+                                  <button disabled={!none && !acceptable.length}>
+                                    Save vote
+                                  </button>
+                                </div>
+                              </fieldset>
+                            </form>
+                          )}
+                        </section>
+                        <SomethingChanged plan={plan} planId={id!} onDone={setNotice} />
+                        {['selected', 'quoting', 'awaiting_payment_approval', 'booking', 'needs_handoff', 'handoff', 'booked'].includes(plan.status) && <details className="quest-invite"><summary>Photo challenges and riddles (optional)</summary><p className="hint">A few things to try together once you’re there. Skip it if you just want to hang out.</p><QuestPanel planId={id!} userId={session!.user.id} status={plan.status} /></details>}
+                      </div>
+                      <aside className="plan-side">
+                        <PlanChatPanel planId={id!} />
+                      </aside>
+                    </div>
                   )}
                   {view === "private" && privateView && (
+                    <div className="private-grid">
+                    <AvailabilityEditor
+                      planId={id!}
+                      timeZone={plan.timeZone ?? profile?.city?.timeZone ?? "America/Chicago"}
+                      revision={plan.revision}
+                      calendarConnected={Boolean(profile?.calendarConnected)}
+                      onSaved={loadData}
+                    />
+                    <SpendingLimitEditor planId={id!} revision={plan.revision} onSaved={loadData} />
                     <section className="panel">
                       <h2>Private notes</h2>
                       {privateView.facts.length === 0 && (
@@ -848,8 +915,12 @@ export function MuseApp({
                       )}
                       {privateView.facts.map((f) => (
                         <div className="private-fact" key={f.id}>
-                          <strong>{f.kind}</strong>
-                          <p>{privateFactText(f)}</p>
+                          <strong>{({ availability: "Your times", spending_limit: "Spending limit", preference: "Preference", requirement: "Requirement" } as Record<string, string>)[f.kind] ?? f.kind}</strong>
+                          {f.kind === "availability" ? (
+                            <AvailabilityFact value={f.value} timeZone={plan.timeZone ?? "America/Chicago"} />
+                          ) : (
+                            <p>{privateFactText(f)}</p>
+                          )}
                         </div>
                       ))}
                       {privateView.messages?.map((m) => (
@@ -886,6 +957,7 @@ export function MuseApp({
                         <button disabled={busy}>Send privately</button>
                       </form>
                     </section>
+                    </div>
                   )}
                   {view === "payment" && payment && (
                     <section className="panel">

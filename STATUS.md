@@ -2,6 +2,13 @@
 
 Each owner keeps their own section current: status, files, what actually works + the check run, blockers, next action.
 
+## Chat-first feature pass — ready for review; not deployed (October 25)
+
+- Branch `design/chat-first-features` (from `design/chat-first-preview` @ 4bb4cf8). Files: `apps/web/app/{page.tsx,globals.css}`, `apps/web/components/{plan-parts.tsx (new),muse-app.tsx,plan-chat-panel.tsx,standout-panel.tsx}`, `apps/web/lib/views.ts`, `apps/web/tests/e2e/plan-surface.spec.ts` (new).
+- Works (against mocked API responses only): homepage logo enlarged and figures moved from corners into staggered flanks; plan page puts options + live chat side by side (≥1180px), with a lifecycle stepper, next-action card, option cards (local time/zone, price provenance, unknowns, sources beside each option, per-member vote bar), "updated options" notice, agreed plan with itinerary from recorded `timeline`, own-calendar add (`POST /calendar`) and ICS download, and a "Something changed?" path (private facts / chat; booked plans use `change-requests`). Private page adds manual availability (`PUT /private` availability fact, UTC in plan zone, day-track diagram) and a spending limit. Dashboard lists plans first with status, avatars and "vote needed"; interests moved below. Common Ground shows a shared-interest diagram. Chat: timestamps, Sid styling, polite announcements of new messages only, retry, Ctrl+Enter. Leftover violet colors mapped to paper/ink/gold. Activities copy no longer says checkout is always required.
+- Checks: web + root `tsc` clean; `next build` passes; Playwright (dev server, both viewports): plan-surface, standout, design-consistency, snowflake-recap, accounts pass (one accounts test flaked once on first compile, then 3/3 green).
+- Not verified: real Google Calendar write, live availability repair, live change requests. No deploys, messages or calendar writes were made. Next: integration lead reviews/merges into `design/chat-first-preview`.
+
 ## Snowflake conversation recap — ready for review (October 25)
 
 - **Owner:** Snowflake integration agent; merged `feature/snowflake-recap` (`2d13c34`) into the shared frontend branch `design/chat-first-preview` on top of `32170f7`, at the owner's request. Latest homepage changes are preserved; the separate local design-handoff prompt is excluded. Continue frontend work on `design/chat-first-preview`.

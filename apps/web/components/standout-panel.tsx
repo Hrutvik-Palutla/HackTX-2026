@@ -64,8 +64,23 @@ export function CommonGroundPicker({ friendIds, onPick }: { friendIds: string[];
   </section>;
 }
 
+/** Each friend's shared interests as a circle; the outing idea sits where they overlap. Only shared, confirmed chips arrive here. */
+function InterestVenn({ ground }: { ground: Ground }) {
+  const people = [...new Map(ground.why.map(c => [c.ownerId, c.name])).entries()].slice(0, 4);
+  if (people.length < 2) return null;
+  const caption = `Shared interests from ${people.map(([id, name]) => `${name} (${ground.why.filter(c => c.ownerId === id).map(c => c.label).join(', ')})`).join(' and ')} meet in: ${ground.theme}`;
+  return <figure className="interest-venn"><svg viewBox="0 0 240 150" aria-hidden="true">
+    {people.map(([id, name], i) => {
+      const a = people.length === 2 ? Math.PI * (1 - i) : (i / people.length) * Math.PI * 2 - Math.PI / 2;
+      const cx = 120 + Math.cos(a) * 34, cy = 78 + Math.sin(a) * 30;
+      return <g key={id} className="venn-circle" style={{ animationDelay: `${i * 90}ms` }}><circle cx={cx} cy={cy} r={50} /><text x={120 + Math.cos(a) * 66} y={78 + Math.sin(a) * 56 + 4} textAnchor="middle">{name.split(' ')[0]}</text></g>;
+    })}
+    <circle className="venn-core" cx="120" cy="78" r="4" />
+  </svg><figcaption className="visually-hidden">{caption}</figcaption></figure>;
+}
+
 function GroundEvidence({ ground }: { ground: Ground }) {
-  return <div className="ground-evidence"><h3>{ground.theme}</h3><ul>{ground.why.map(c => <li key={c.id}><strong>{c.name}</strong>: {c.label}<blockquote>“{c.evidence}”</blockquote></li>)}</ul><p className="hint">Searching for: {ground.searchQuery}</p></div>;
+  return <div className="ground-evidence"><InterestVenn ground={ground} /><h3>{ground.theme}</h3><ul>{ground.why.map(c => <li key={c.id}><strong>{c.name}</strong>: {c.label}<blockquote>“{c.evidence}”</blockquote></li>)}</ul><p className="hint">Searching for: {ground.searchQuery}</p></div>;
 }
 
 export function QuestPanel({ planId, userId, status }: { planId: string; userId: string; status: string }) {
@@ -80,7 +95,7 @@ export function QuestPanel({ planId, userId, status }: { planId: string; userId:
   return <section className="panel quest-panel">
     {ground && <GroundEvidence ground={ground} />}
     <span className="eyebrow">Optional activities</span><h2>{quest?.title ?? 'Photo challenges and riddles'}</h2>
-    {!quest && <><p>Try three photo challenges and two riddles when you get there.</p><button disabled={busy || !eligible} onClick={() => void perform(() => api<Quest>(`/plans/${planId}/quest`, { method: 'POST' }))}>{busy ? 'Preparing activities…' : 'Add some activities'}</button>{!eligible && <p className="hint">Finish checkout to add activities.</p>}</>}
+    {!quest && <><p>Try three photo challenges and two riddles when you get there.</p><button disabled={busy || !eligible} onClick={() => void perform(() => api<Quest>(`/plans/${planId}/quest`, { method: 'POST' }))}>{busy ? 'Preparing activities…' : 'Add some activities'}</button>{!eligible && <p className="hint">Activities open once checkout is settled. Free outings can add them as soon as the group agrees.</p>}</>}
     {error && <p role="alert">{error}</p>}
     {quest?.art && <img className="quest-art" src={quest.art} alt="Illustration for this outing" />}
     {quest && !quest.art && <button className="secondary" disabled={busy} onClick={() => void perform(() => api<Quest>(`/plans/${planId}/quest/art`, { method: 'POST' }))}>{busy ? 'Creating…' : 'Add an illustration'}</button>}
