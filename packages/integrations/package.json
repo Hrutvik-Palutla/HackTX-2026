@@ -13,6 +13,7 @@
     "./calendar-jobs": "./calendar-jobs.ts"
   },
   "dependencies": {
+    "@hacktx/agent": "workspace:*",
     "@hacktx/contracts": "workspace:*",
     "@hacktx/core": "workspace:*",
     "@hacktx/db": "workspace:*",

@@ -206,7 +206,7 @@ export type Reimbursement = z.infer<typeof Reimbursement>;
 
 // ---------- messaging / ports ----------
 export const InboundMessage = z.object({
-  provider: z.enum(['linq', 'telegram']),
+  provider: z.enum(['linq', 'telegram', 'claw_messenger']),
   eventId: z.string(),
   messageId: z.string(),
   conversationExternalId: z.string(),
@@ -223,6 +223,8 @@ export const OutboundRecipient = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('group'), conversationId: Id }),
   z.object({ kind: z.literal('private'), userId: Id, conversationId: Id.optional() }),
   z.object({ kind: z.literal('invite'), invitationId: Id }),
+  // OTP to a phone that may not have an account yet; the phone is encrypted ('phone' domain).
+  z.object({ kind: z.literal('otp_phone'), phoneEnc: z.string() }),
 ]);
 export type OutboundRecipient = z.infer<typeof OutboundRecipient>;
 

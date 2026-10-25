@@ -5,12 +5,12 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { eq } from 'drizzle-orm';
 import {
-  schema, migrationsFolder, conversations, externalEffects, inboundEvents, jobs, messages, messagingIdentities, outbox, plans,
+  schema, migrationsFolder, conversationMembers, conversations, planConversations, externalEffects, inboundEvents, jobs, messages, messagingIdentities, outbox, plans,
   planVersions, user, type Db,
 } from '@hacktx/db';
 import { enqueueMessage, type Job } from '@hacktx/core';
 import {
-  CLAW_PROVIDER, createPublishPollHandler, createSendOutboxHandler, formatTextPoll, ingestClawMessage, toInboundMessage,
+  CLAW_PROVIDER, GROUP_INTRO, createClawGroup, createPublishPollHandler, createSendOutboxHandler, formatTextPoll, ingestClawMessage, toInboundMessage,
 } from './claw-adapter.ts';
 import type { ClawInboundMessage, ClawSendResult, SendTarget } from './claw-messenger.ts';
 
@@ -179,3 +179,44 @@ describe('publish_poll', () => {
   });
 });
 
+
+describe('added to a group', () => {
+  it('says "How can I help?" once, on the first message from a new group', async () => {
+    const g = (id: string) => inbound({ messageId: id, chatId: 'chat-new', isGroup: true, participants: ['+15125550100', '+15125550101', LINE] });
+    await ingestClawMessage(db, LINE, g('g1'));
+    await ingestClawMessage(db, LINE, g('g2'));
+    const rows = await db.select().from(outbox);
+    expect(rows.map((r) => r.body)).toEqual([GROUP_INTRO]);
+    expect(GROUP_INTRO).toBe('How can I help?');
+    const [conv] = await db.select().from(conversations).where(eq(conversations.externalChatId, 'chat-new'));
+    expect(rows[0]!.recipient).toEqual({ kind: 'group', conversationId: conv!.id });
+    expect(await db.select().from(jobs).where(eq(jobs.kind, 'process_inbound'))).toHaveLength(2); // the request is still handled
+  });
+
+  it('does not greet private chats', async () => {
+    await ingestClawMessage(db, LINE, inbound());
+    expect(await db.select().from(outbox)).toHaveLength(0);
+  });
+
+  it('tracks members (excluding the agent) and who left', async () => {
+    await db.insert(messagingIdentities).values({ userId: 'u_alex', provider: CLAW_PROVIDER, handle: '+15125550100', kind: 'phone', verifiedAt: new Date() });
+    await ingestClawMessage(db, LINE, inbound({ messageId: 'a', chatId: 'c', isGroup: true, participants: ['+15125550100', '+15125550101', LINE] }));
+    await ingestClawMessage(db, LINE, inbound({ messageId: 'b', chatId: 'c', isGroup: true, participants: ['+15125550100', LINE] }));
+    const members = await db.select().from(conversationMembers);
+    expect(members.map((m) => [m.unresolvedHandle, m.isCurrent, !!m.messagingIdentityId]).sort()).toEqual([
+      ['+15125550100', true, true], ['+15125550101', false, false],
+    ]);
+  });
+});
+
+describe('createClawGroup', () => {
+  it('creates the chat by sending to every member and links it to the plan', async () => {
+    const [p] = await db.insert(plans).values({ organizerUserId: 'u_alex', request: 'movie', templateId: 'movie-night', city: austin, timeZone: 'America/Chicago', status: 'voting' }).returning();
+    const client = new FakeClient();
+    client.next = async () => ({ type: 'send.result', id: 'x', ok: true, status: 'accepted', messageId: 'pm', chatId: 'chat-made' });
+    const r = await createClawGroup(db, client, { sendingLine: LINE, memberHandles: ['+15125550100', '+15125550101'], introText: 'Hi all', planId: p!.id });
+    expect(client.sent[0]).toEqual({ target: { to: ['+15125550100', '+15125550101'] }, text: 'Hi all' });
+    const [link] = await db.select().from(planConversations);
+    expect(link).toMatchObject({ planId: p!.id, conversationId: r.conversationId, audience: 'group' });
+  });
+});

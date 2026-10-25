@@ -300,7 +300,7 @@ Conflict rules: stale revision/version returns `409 STALE_PLAN`; unauthorized ac
 
 ```ts
 type InboundMessage = {
-  provider: 'linq' | 'telegram';
+  provider: 'linq' | 'telegram' | 'claw_messenger';
   eventId: string;
   messageId: string;
   conversationExternalId: string;
@@ -315,7 +315,8 @@ type InboundMessage = {
 type OutboundRecipient =
   | { kind: 'group'; conversationId: Id }
   | { kind: 'private'; userId: Id; conversationId?: Id }
-  | { kind: 'invite'; invitationId: Id }; // only connection/onboarding content
+  | { kind: 'invite'; invitationId: Id } // only connection/onboarding content
+  | { kind: 'otp_phone'; phoneEnc: string }; // OTP to a not-yet-registered phone; encrypted
 
 interface MessagingPort {
   capabilities: {

@@ -39,3 +39,23 @@ export async function webConversation(db: Db, planId: string, scope: 'group' | '
   if (scope === 'group') await db.insert(planConversations).values({ planId, conversationId: conv!.id, audience: 'group' }).onConflictDoNothing();
   return conv!;
 }
+
+/**
+ * Messaging adapters that can create group chats register a creator here (Part 3: Claw Messenger).
+ * The planner calls ensurePlanGroup before publishing so a plan started by private message gets a group chat
+ * with the organizer and participants. Without a creator, or if creation fails, plans use the private-message fallback.
+ */
+export type PlanGroupCreator = (db: Db, planId: string) => Promise<void>;
+let groupCreator: PlanGroupCreator | null = null;
+export const configurePlanGroupCreator = (c: PlanGroupCreator | null) => { groupCreator = c; };
+
+export async function ensurePlanGroup(db: Db, planId: string) {
+  if (!groupCreator) return;
+  const linked = await db.select({ provider: conversations.provider }).from(planConversations)
+    .innerJoin(conversations, eq(conversations.id, planConversations.conversationId))
+    .where(and(eq(planConversations.planId, planId), eq(planConversations.audience, 'group')));
+  if (linked.some((c) => c.provider !== WEB)) return;
+  try { await groupCreator(db, planId); } catch (e) {
+    console.warn(`[groups] could not create a group for plan ${planId}; using private messages: ${e instanceof Error ? e.message : e}`);
+  }
+}

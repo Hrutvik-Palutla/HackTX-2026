@@ -4,12 +4,11 @@
 import { createHash } from 'node:crypto';
 import { messagingIdentities, outbox, type Db } from '@hacktx/db';
 import { enqueue, seal } from '@hacktx/core';
+import type { OutboundRecipient } from '@hacktx/contracts';
 import { CLAW_PROVIDER } from './claw-adapter.ts';
 
 export type PrivateOtpMessage = { phoneE164: string; code: string; expiresInSeconds: number; purpose: 'account_verification' };
 
-/** Outbox recipient for someone who may not have an account yet. Not in CONTRACTS.md OutboundRecipient yet (requested from Part 2). */
-export type OtpRecipient = { kind: 'otp_phone'; phoneEnc: string };
 
 const E164 = /^\+[1-9]\d{6,14}$/;
 
@@ -21,7 +20,7 @@ export function createOtpSender(db: Db) {
   return async (m: PrivateOtpMessage): Promise<void> => {
     if (!E164.test(m.phoneE164)) throw new Error('OTP phone must be E.164');
     const effectKey = `otp:${createHash('sha256').update(`${m.phoneE164}:${m.code}:${m.purpose}`).digest('hex').slice(0, 32)}`;
-    const recipient: OtpRecipient = { kind: 'otp_phone', phoneEnc: seal('phone', m.phoneE164) };
+    const recipient: OutboundRecipient = { kind: 'otp_phone', phoneEnc: seal('phone', m.phoneE164) };
     await db.transaction(async (tx) => {
       const rows = await tx.insert(outbox).values({
         recipient, effectKey, body: null, bodyEnc: seal('outbox', otpText(m.code, m.expiresInSeconds)),

@@ -156,6 +156,9 @@ importers:
 
   packages/integrations:
     dependencies:
+      '@hacktx/agent':
+        specifier: workspace:*
+        version: link:../agent
       '@hacktx/contracts':
         specifier: workspace:*
         version: link:../contracts
