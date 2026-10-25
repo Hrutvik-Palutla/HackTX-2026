@@ -35,7 +35,7 @@ it('holds all named people until invitation acceptance; the delivery uses the sh
   const sentTo: unknown[] = [];
   const sendJob = (await db.select().from(jobs)).find(job => job.kind === 'send_outbox')!;
   await createSendOutboxHandler({ send: async target => { sentTo.push(target); return { type: 'send.result', id: 'test', status: 'accepted', ok: true, messageId: 'test' }; } })({ db, job: sendJob });
-  expect(sentTo).toEqual([{ to: '+15125550102' }]);
+  expect(sentTo).toEqual([{ to: '+15125550102' }, { to: '+15125550102' }]); // the invite text, then its link alone so iOS shows a preview
   await db.insert(user).values({ id: 'sam', name: 'Sam', email: 'sam@owned.invalid', emailVerified: false, city: JSON.stringify(austin), phoneNumber: '+15125550102', phoneNumberVerified: true });
   expect(await pendingRequestsFor(db, 'sam')).toMatchObject([{ userId: ids.Alex }]);
   await acceptInviteForUser(db, 'sam', token);

@@ -100,9 +100,9 @@ describe('planner', () => {
     expect(result.status).toBe('published');
     if (result.status !== 'published') return;
     expect(result.options[0]).toMatchObject({ startAt: null, endAt: null, fit: 'needs_clarification', sourceIds: ['src_extract'] });
-    expect((await db.select().from(outbox))[0]!.body).toContain('time unconfirmed');
+    expect((await db.select().from(outbox))[0]!.body).toContain('time to confirm');
     expect((await db.select().from(outbox))[0]!.body).toContain('https://theater.example.org/dune');
-    expect((await db.select().from(outbox))[0]!.body).toContain('Which theater and time window');
+    expect((await db.select().from(outbox))[0]!.body).toContain('What time works best');
   });
 
   it('keeps source-page theater options available when the request cap stops extraction', async () => {
@@ -200,7 +200,7 @@ describe('planner', () => {
     expect(searched).toBe(1);
     expect(result.status).toBe('published');
     if (result.status === 'published') expect(result.options[0]).toMatchObject({ startAt: null, uncertainties: expect.arrayContaining(['Event time not confirmed; check source page']) });
-    expect((await db.select().from(outbox))[0]!.body).toContain('time unconfirmed');
+    expect((await db.select().from(outbox))[0]!.body).toContain('time to confirm');
     expect((await db.select().from(outbox))[0]!.body).not.toContain('Nov 1');
   });
 

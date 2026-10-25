@@ -1,7 +1,7 @@
 // Private facts: owner-only through APIs; the deterministic feasibility layer reads them server-side.
 // Nothing here returns another user's fact to a caller, and nothing feeds raw facts to public prompts.
 import { and, eq, gte, inArray, isNull, lte } from 'drizzle-orm';
-import { availabilitySnapshots, plans, privateFacts, type Db } from '@hacktx/db';
+import { availabilitySnapshots, planOptions, plans, privateFacts, type Db } from '@hacktx/db';
 import { PrivateFactValue, type ActorContext, type Interval, type PrivateFact } from '@hacktx/contracts';
 import { openJson, sealJson } from './crypto';
 import { assertMember, requestRepair } from './plans';
@@ -37,10 +37,21 @@ export async function savePrivateFact(
     return row!;
   });
   // 'planning' included: bumping the revision makes an in-flight run's draft stale instead of publishing without this fact.
-  if (['planning', 'voting', 'selected', 'clarifying'].includes(plan.status)) {
+  if (['planning', 'voting', 'selected', 'clarifying'].includes(plan.status) && !(await isHarmlessTimeHint(db, plan, fact))) {
     await requestRepair(db, plan.id, input.expectedRevision ?? plan.inputRevision, 'private constraint changed');
   }
   return { id: row.id };
+}
+
+/**
+ * "7pm works" says when someone is free; it cannot rule out an option that has no start time yet. Rebuilding
+ * the options and poll for it only resets everyone's votes, so it is saved for the next real re-plan instead.
+ */
+async function isHarmlessTimeHint(db: Db, plan: { status: string; activeVersionId: string | null }, fact: PrivateFactValue) {
+  if (plan.status !== 'voting' || !plan.activeVersionId) return false;
+  if (fact.kind !== 'availability' || fact.value.unavailable.length) return false;
+  const options = await db.select({ payload: planOptions.payload }).from(planOptions).where(eq(planOptions.versionId, plan.activeVersionId));
+  return options.length > 0 && options.every((o) => !(o.payload as { startAt?: string | null }).startAt);
 }
 
 const toFact = (r: typeof privateFacts.$inferSelect): PrivateFact => ({

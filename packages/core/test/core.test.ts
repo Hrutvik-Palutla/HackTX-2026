@@ -169,6 +169,40 @@ describe('plan lifecycle', () => {
   });
 });
 
+describe('time hints', () => {
+  async function untimedVotingPlan() {
+    const db = await testDb();
+    const u = await seedUsers(db, ['Alex', 'Mark']);
+    await befriend(db, u.Alex!, u.Mark!);
+    const { plan } = await createPlan(db, web(u.Alex!), { request: 'movie', templateId: 'movie-night', city: austin, window: W, participantUserIds: [u.Mark!] });
+    const untimed = { ...draft('A', '2026-10-31T19:00:00.000Z', '2026-10-31T21:00:00.000Z'), startAt: null, endAt: null, fit: 'needs_clarification' as const };
+    await publishVersion(db, { planId: plan.id, inputRevision: 0, runId: null, options: [untimed] });
+    return { db, u, plan };
+  }
+  const positive = { kind: 'availability' as const, value: { window: W, available: [{ startAt: '2026-10-31T19:00:00.000Z', endAt: '2026-10-31T21:00:00.000Z' }], unavailable: [], certainty: 'explicit' as const } };
+
+  it('"7pm works" is saved without rebuilding options that have no time yet', async () => {
+    const { db, u, plan } = await untimedVotingPlan();
+    await savePrivateFact(db, web(u.Mark!), { planId: plan.id, fact: positive });
+    const [p] = await db.select().from(plans).where(eq(plans.id, plan.id));
+    expect(p).toMatchObject({ status: 'voting', inputRevision: 0 });
+    expect((await listOwnFacts(db, web(u.Mark!), plan.id)).map((f) => f.kind)).toEqual(['availability']);
+  });
+
+  it('still re-plans when someone says they cannot make it', async () => {
+    const { db, u, plan } = await untimedVotingPlan();
+    await savePrivateFact(db, web(u.Mark!), { planId: plan.id, fact: { ...positive, value: { ...positive.value, available: null, unavailable: [{ startAt: '2026-10-31T19:00:00.000Z', endAt: '2026-10-31T21:00:00.000Z' }] } } });
+    const [p] = await db.select().from(plans).where(eq(plans.id, plan.id));
+    expect(p).toMatchObject({ status: 'planning', inputRevision: 1 });
+  });
+
+  it('still re-plans for options that already have a time', async () => {
+    const { db, u, plan } = await votingPlan();
+    await savePrivateFact(db, web(u.Mark!), { planId: plan.id, fact: positive });
+    expect((await db.select().from(plans).where(eq(plans.id, plan.id)))[0]!.inputRevision).toBe(1);
+  });
+});
+
 describe('privacy', () => {
   it('private facts are owner-only, encrypted, absent from the public projection, and trigger repair', async () => {
     const { db, u, plan } = await votingPlan();
