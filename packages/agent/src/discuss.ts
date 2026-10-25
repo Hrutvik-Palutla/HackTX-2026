@@ -185,8 +185,24 @@ Message ids in brackets can be cited as evidence.` },
   } catch (e) {
     if (e instanceof LimitError) { await rec.finish('limit', e.message); return { status: 'limit' as const }; }
     await rec.finish('error', e instanceof Error ? e.message : String(e));
+    // A permanent Muse 4xx is not fixed by retrying the same inbound job. Surface the
+    // failure in its conversation so provider errors do not look like a dead listener.
+    if (isPermanentMuseClientError(e)) {
+      await postToConversation(db, conv, 'I couldn’t process that message just now. Please try again in a little while.', {
+        effectKey: `agent-error:${stored.id}`,
+        planId: plan?.id ?? null,
+        privateUserId: userId,
+      });
+      return { status: 'model_unavailable' as const, replied: true };
+    }
     throw e;
   }
+}
+
+function isPermanentMuseClientError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('status' in error)) return false;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429;
 }
 
 /** Bounded Muse tool loop. Tool errors go back to the model as data; limits are enforced by the recorder. */
