@@ -22,8 +22,18 @@ export async function getPublicDemo() {
   try {
     const cfg = registry.hacktxApiCfg;
     if (!cfg) return Response.json({ data: null }, { status: 503 });
-    return Response.json({ data: await loadPublicDemo(cfg.db) }, { headers: { 'Cache-Control': 'public, max-age=30' } });
+    const data = await loadPublicDemo(cfg.db);
+    if (data?.quest?.art) data.quest.art = '/api/demo/art';
+    return Response.json({ data }, { headers: { 'Cache-Control': 'public, max-age=30' } });
   } catch { return Response.json({ error: { code: 'UNRESOLVED', message: 'The recorded example is temporarily unavailable.', retryable: true } }, { status: 503 }); }
+}
+export async function getPublicDemoArt() {
+  try {
+    const cfg = registry.hacktxApiCfg;
+    const art = cfg ? (await loadPublicDemo(cfg.db))?.quest?.art : null;
+    if (!art?.startsWith('data:image/png;base64,')) return new Response(null, { status: 404 });
+    return new Response(Buffer.from(art.slice('data:image/png;base64,'.length), 'base64'), { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff' } });
+  } catch { return new Response(null, { status: 503 }); }
 }
 
 type Ctx = { req: Request; db: Db; actor: ActorContext; params: Record<string, string>; requestId: string };

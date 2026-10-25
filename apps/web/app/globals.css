@@ -1003,3 +1003,6 @@ pre {
 .landing-hero h1 { font-size: clamp(2rem, 5vw, 3.5rem); line-height:1.12; letter-spacing:-.035em; margin: 1rem 0 1.5rem; }
 .landing-hero > p { font-size:1.15rem; line-height:1.7; max-width:680px; color:#625d76; }
 .landing-steps { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:1rem; }
+.landing-steps > * { min-width:0; }
+.app[data-view="demo"] .panel { max-width:none; }
+.app[data-view="demo"] .back { white-space:normal; overflow-wrap:anywhere; }

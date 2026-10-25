@@ -18,6 +18,14 @@ test('voice uploads normalize a normal 22050Hz recording into supported mono 160
 const city = { label: 'Austin, Texas, United States', countryCode: 'US', latitude: 30.27, longitude: -97.74, timeZone: 'America/Chicago' };
 const profile = { id: 'own', name: 'Alex', phoneE164: '+15125550100', phoneVerified: true, avatarUrl: null, city, interests: [], calendarConnected: false, onboardingComplete: true };
 const ground = { id: '11111111-1111-4111-8111-111111111111', theme: 'Night-sky photo walk', searchQuery: 'Austin stargazing photography walk', why: [{ id: 'chip1', name: 'Mel', ownerId: 'mel', label: 'Night photography', evidence: 'I love night photography', kind: 'interest', confirmed: true, shared: true }] };
+test('public recorded demo labels synthetic people and wraps long source links', async ({ page }) => {
+  await page.route('**/api/demo', route => route.fulfill({ json: { data: { recordedAt: '2026-10-25T05:00:00Z', ground, quest: null, runs: [], plan: { options: [{ id: 'o', label: 'A', title: 'A real sourced park', startAt: '2026-10-26T22:00:00Z', timeZone: city.timeZone, estimatedPerPerson: null, publicExplanation: 'An option in Austin.', uncertainties: ['Opening hours unverified'], sourceIds: ['s'] }], sources: [{ id: 's', url: 'https://example.com/park', title: 'Google Maps places for stargazing night sky viewing walk in a local park for night photography' }] } } } }));
+  await page.goto('/demo');
+  await expect(page.getByRole('heading', { name: ground.theme })).toBeVisible();
+  await expect(page.getByText('Read-only example', { exact: false })).toContainText('Synthetic friends');
+  await expect(page.getByRole('link', { name: /Google Maps places/ })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
 async function app(page: Page, overrides: Record<string, (route: Route) => Promise<void>>) {
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
