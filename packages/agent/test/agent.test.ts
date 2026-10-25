@@ -388,3 +388,54 @@ describe('sources', () => {
     expect(view.sources).toEqual([{ id: 'src_test', url: src.url, title: src.title, provider: 'serpapi_google', fetchedAt: src.fetchedAt }]);
   });
 });
+
+describe('vote status for the agent', () => {
+  const opt = (label: 'A' | 'B') => ({ label, title: `Clayface at Cinema ${label} in Austin, TX`, candidateIds: [label], startAt: '2026-10-31T20:00:00.000Z', endAt: '2026-10-31T22:00:00.000Z', timeZone: 'America/Chicago', timeline: [], estimatedPerPerson: null, priceKind: 'unknown' as const, fit: 'fits_known_constraints' as const, uncertainties: [], publicExplanation: '', sourceIds: [] });
+  const vote = (labels: string[]) => ({ tool_calls: [{ id: 'c1', type: 'function' as const, function: { name: 'record_vote', arguments: JSON.stringify({ acceptableLabels: labels, favoriteLabel: null, noneAcceptable: false }) } }] });
+  const msg = (id: string, from: string, text: string) => ({ provider: 'linq', eventId: id, messageId: id, conversationExternalId: 'chat1', conversationKind: 'group', senderHandle: from, senderKind: 'phone', text, occurredAt: '2026-10-30T18:00:00.000Z', replyToMessageId: null }) as const;
+  const toolResult = (muse: ReturnType<typeof fakeMuse>) => JSON.parse(String((muse.seen[1]!.find((m) => m.role === 'tool') as { content: string }).content));
+
+  async function votingGroup() {
+    const t = await setup();
+    await publishVersion(t.db, { planId: t.plan.id, inputRevision: t.plan.inputRevision, runId: null, options: [opt('A'), opt('B')] });
+    await t.db.insert(messagingIdentities).values([
+      { userId: t.u.Alex!, provider: 'linq', handle: '+15125550100', kind: 'phone', verifiedAt: new Date() },
+      { userId: t.u.Mark!, provider: 'linq', handle: '+15125550101', kind: 'phone', verifiedAt: new Date() },
+    ]);
+    return t;
+  }
+  const say = async (db: Awaited<ReturnType<typeof setup>>['db'], id: string, from: string, text: string, labels: string[]) => {
+    const muse = fakeMuse({ chat: [vote(labels), { content: 'ok' }] });
+    await handleInbound({ db, muse }, { sendingLine: '+15125550000', message: msg(id, from, text) });
+    return toolResult(muse);
+  };
+
+  it('names who it is waiting on, then reports agreement with the wrap-up details', async () => {
+    const { db } = await votingGroup();
+    const first = await say(db, 'v1', '+15125550101', 'A', ['A']);
+    expect(first).toMatchObject({ saved: true, unchanged: false, waitingOn: ['Alex'], agreed: null });
+    expect(first.next).toContain('Waiting on Alex');
+
+    const second = await say(db, 'v2', '+15125550100', 'A works', ['A']);
+    expect(second.waitingOn).toEqual([]);
+    expect(second.agreed).toMatchObject({ label: 'A', title: 'Clayface at Cinema A', when: expect.stringContaining('PM') });
+    expect(second.next).toContain('Everyone agrees on A');
+    expect(second.next).toContain('Do not ask for another confirmation or who is paying');
+  });
+
+  it('flags a repeated identical vote so the agent does not repeat itself', async () => {
+    const { db } = await votingGroup();
+    await say(db, 'v1', '+15125550101', 'A', ['A']);
+    const again = await say(db, 'v2', '+15125550101', 'A', ['A']);
+    expect(again.unchanged).toBe(true);
+    expect(again.next).toContain('same vote as before');
+  });
+
+  it('asks one question when different options work for different people', async () => {
+    const { db } = await votingGroup();
+    await say(db, 'v1', '+15125550101', 'A', ['A']);
+    const last = await say(db, 'v2', '+15125550100', 'B', ['B']);
+    expect(last.agreed).toBeNull();
+    expect(last.next).toContain('No option works for everyone');
+  });
+});

@@ -3,8 +3,8 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { and, eq, inArray, or } from 'drizzle-orm';
-import { conversationMembers, conversations, friendships, messages, messagingIdentities, planConversations, planOptions, planParticipants, plans, planningDrafts, researchEvidence, sources, user, type Db } from '@hacktx/db';
-import { City, type ActorContext } from '@hacktx/contracts';
+import { conversationMembers, conversations, friendships, messages, messagingIdentities, planConversations, planOptions, planParticipants, plans, planningDrafts, researchEvidence, sources, user, voteStates, votes, type Db } from '@hacktx/db';
+import { City, type ActorContext, type PlanOption } from '@hacktx/contracts';
 import {
   AppError, activeTally, assertMember, createPlan, enqueue, enqueueMessage, parseCity, open, publicPlan,
   recordDecision, recordVote, requestRepair, savePrivateFact, updateParticipants, closePlan,
@@ -14,6 +14,7 @@ import type { ToolSpec } from './muse';
 import type { ResearchPort } from '@hacktx/contracts';
 import type { Muse } from './muse';
 import { runResearch } from './research';
+import { localTime, tidyTitle } from './format';
 import type { RunRecorder } from './recorder';
 import {
   NOT_SET_UP, afterBooking, bookingLabel, cancelHandoff, fulfillmentError, fulfillmentService, moveStatus, readSelection, sendHandoff, setBuyer,
@@ -61,6 +62,46 @@ async function requestDraftContacts(ctx: ToolCtx, args: z.infer<typeof StartPlan
       effectKey: `draft-contacts:${ctx.messageId}`, planId: null });
     return { draftId: draft!.id, privateQuestionQueued: true };
   });
+}
+
+/**
+ * Who has voted, who hasn't, and whether everyone agrees, so the agent never asks a person for something they
+ * already did. `next` is the one thing the agent should say.
+ */
+export async function voteStatus(db: Db, planId: string) {
+  const [plan] = await db.select().from(plans).where(eq(plans.id, planId));
+  if (!plan?.activeVersionId) return null;
+  const opts = await db.select().from(planOptions).where(eq(planOptions.versionId, plan.activeVersionId));
+  const parts = (await db.select({ userId: planParticipants.userId }).from(planParticipants).where(eq(planParticipants.planId, planId)))
+    .map((p) => p.userId).filter((id): id is string => !!id);
+  const names = parts.length ? await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, parts)) : [];
+  const first = (id: string) => names.find((n) => n.id === id)?.name.split(/\s+/)[0] ?? 'Someone';
+  const cast = await db.select().from(votes).where(eq(votes.versionId, plan.activeVersionId));
+  const states = await db.select().from(voteStates).where(eq(voteStates.versionId, plan.activeVersionId));
+  const labelOf = new Map(opts.map((o) => [o.id, o.label]));
+  const voted = parts.filter((id) => states.some((s) => s.userId === id));
+  const waitingOn = parts.filter((id) => !voted.includes(id)).map(first);
+  const noneWork = voted.filter((id) => states.find((s) => s.userId === id)?.noneAcceptable).map(first);
+  const common = waitingOn.length || !parts.length ? [] : opts.filter((o) => parts.every((id) => cast.some((v) => v.userId === id && v.optionId === o.id)));
+  const favorites = (id: string) => states.filter((s) => s.favoriteOptionId === id).length;
+  const best = [...common].sort((a, b) => favorites(b.id) - favorites(a.id));
+  const winner = best.length === 1 || (best.length > 1 && favorites(best[0]!.id) > favorites(best[1]!.id)) ? best[0]! : null;
+  let agreed: { label: string; title: string; when: string | null; link: string | null } | null = null;
+  if (winner) {
+    const o = winner.payload as PlanOption;
+    const [src] = o.sourceIds?.length ? await db.select({ url: sources.url }).from(sources).where(inArray(sources.id, o.sourceIds.slice(0, 1))) : [];
+    agreed = { label: winner.label, title: tidyTitle(o.title), when: o.startAt ? localTime(o.startAt, o.timeZone) : null, link: src?.url ?? null };
+  }
+  const tie = !winner && common.length > 1 ? common.map((o) => o.label) : null;
+  const next = noneWork.length ? `${noneWork.join(' and ')} said none of the options work. Ask one question: what would work instead?`
+    : waitingOn.length ? `Waiting on ${waitingOn.join(' and ')}. Say that in one short line. Do not ask anyone who already voted.`
+    : agreed ? `Everyone agrees on ${agreed.label}. Send one wrap-up: ${agreed.title}${agreed.when ? `, ${agreed.when}` : ', time to confirm on the listing'}, with the link alone on the last line if there is one. Do not ask for another confirmation or who is paying, and do not offer to book. That finishes the plan.`
+    : tie ? `More than one option works for everyone (${tie.join(', ')}). Ask the group which one in a single question.`
+    : 'No option works for everyone. Offer in one short line to look for different options.';
+  return {
+    voted: voted.map((id) => ({ name: first(id), accepts: cast.filter((v) => v.userId === id).map((v) => labelOf.get(v.optionId)).sort() })),
+    waitingOn, agreed, tie, next,
+  };
 }
 
 function needPlan(ctx: ToolCtx) {
@@ -277,11 +318,18 @@ export const TOOLS = [
       const planId = needPlan(ctx);
       const { versionId, ids } = await labelsToIds(ctx.db, planId, a.acceptableLabels);
       const fav = a.favoriteLabel ? (await labelsToIds(ctx.db, planId, [a.favoriteLabel])).ids[0]! : null;
+      const mine = async () => (await ctx.db.select().from(votes).where(and(eq(votes.versionId, versionId), eq(votes.userId, ctx.actor.userId)))).map((v) => v.optionId).sort().join();
+      const before = await mine();
       await recordVote(ctx.db, ctx.actor, {
         planId, versionId, acceptableOptionIds: ids, favoriteOptionId: fav, noneAcceptable: a.noneAcceptable,
         source: 'message', sourceEventId: ctx.providerMessageId,
       });
-      return { saved: true, tally: await activeTally(ctx.db, planId) };
+      const status = await voteStatus(ctx.db, planId);
+      const unchanged = before !== '' && before === await mine();
+      return {
+        saved: true, unchanged, ...status, tally: await activeTally(ctx.db, planId),
+        ...(unchanged && status ? { next: `This is the same vote as before. Answer in a few words and do not repeat the tally. ${status.next}` } : {}),
+      };
     },
   }),
   tool({

@@ -14,6 +14,8 @@ import type { Muse } from './muse';
 import { LimitError, RunRecorder } from './recorder';
 import { candidateFromMoviePage, movieTimesOnPage } from './movie-showtimes';
 import { runResearch } from './research';
+import { localTime, tidyTitle } from './format';
+export { localTime, tidyTitle };
 
 import { refreshPlanAvailability, ensurePlanGroup } from '@hacktx/core';
 
@@ -54,8 +56,6 @@ const Picks = z.object({
 type Feasible = { c: Candidate; slot: Interval | null; fit: SlotFit | null; notes: string[] };
 
 const addMin = (iso: string, min: number) => new Date(Date.parse(iso) + min * 60_000).toISOString();
-export const localTime = (iso: string, tz: string) =>
-  new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
 const money = (c: Candidate) => (c.price ? `$${(c.price.amountMinor / 100).toFixed(2)} (${c.priceKind})` : c.rawPriceText ?? 'unknown');
 
 export async function runPlanJob(deps: PlannerDeps, job: { planId: string; inputRevision: number; reason?: string }) {
@@ -368,12 +368,6 @@ price and warnings are shown separately, so do not repeat them. Do not mention a
     await rec.finish('error', e instanceof Error ? e.message : String(e));
     throw e;
   }
-}
-
-/** Scraped page titles ("Extracted page: www.fandango.com", "... - Showtimes & tickets") read badly in a text thread. */
-export function tidyTitle(title: string) {
-  return title.replace(/Extracted page:\s*/i, '').replace(/\s*[-–|]\s*(showtimes|tickets)\b.*$/i, '')
-    .replace(/\s+in\s+[A-Z][\w .'-]+,\s*[A-Z]{2}$/, '').replace(/\s{2,}/g, ' ').trim();
 }
 
 /** Short iMessage-style summary: one line per option, then at most two links and one question. The sender splits links into their own bubbles. */
